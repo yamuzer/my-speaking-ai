@@ -1,8 +1,14 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { authenticateUser, normalizeEmail, startSession } from '$lib/server/auth.js';
+import { loadUserProfile } from '$lib/server/user-profile.js';
 
-export function load({ locals, url }) {
+export async function load({ locals, url }) {
 	if (locals.user) {
+		const profileStatus = await loadUserProfile(locals.user);
+		if (!profileStatus.onboardingCompleted) {
+			throw redirect(303, '/onboarding');
+		}
+
 		throw redirect(303, '/');
 	}
 
@@ -33,6 +39,11 @@ export const actions = {
 		}
 
 		await startSession(cookies, user);
+		const profileStatus = await loadUserProfile(user);
+		if (!profileStatus.onboardingCompleted) {
+			throw redirect(303, '/onboarding');
+		}
+
 		throw redirect(303, '/');
 	}
 };

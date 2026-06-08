@@ -46,16 +46,6 @@ export async function loadConversationRecords(user) {
 	}
 
 	return withDb(async (client) => {
-		await client.query(
-			`INSERT INTO public.users (id, email, name, updated_at)
-			 VALUES ($1, $2, $3, now())
-			 ON CONFLICT (id) DO UPDATE SET
-				email = EXCLUDED.email,
-				name = EXCLUDED.name,
-				updated_at = now()`,
-			[user.id, user.email, user.name ?? user.email?.split('@')[0] ?? null]
-		);
-
 		const result = await client.query(
 			`SELECT id, title, coach_style, messages, status, duration_seconds, started_at
 			 FROM public.conversation_records
@@ -78,16 +68,6 @@ export async function saveConversationRecord(user, session) {
 	}
 
 	await withDb(async (client) => {
-		await client.query(
-			`INSERT INTO public.users (id, email, name, updated_at)
-			 VALUES ($1, $2, $3, now())
-			 ON CONFLICT (id) DO UPDATE SET
-				email = EXCLUDED.email,
-				name = EXCLUDED.name,
-				updated_at = now()`,
-			[user.id, user.email, user.name ?? user.email?.split('@')[0] ?? null]
-		);
-
 		await client.query(
 			`INSERT INTO public.conversation_records
 			 (id, user_id, title, coach_style, messages, status, duration_seconds, started_at, updated_at)

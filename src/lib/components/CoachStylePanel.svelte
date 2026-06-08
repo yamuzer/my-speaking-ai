@@ -1,44 +1,34 @@
 <script>
-	let { styles, selectedStyleId, disabled, onSelect, onSave } = $props();
+	import CoachStyleCard from './CoachStyleCard.svelte';
+	import CoachStyleForm from './CoachStyleForm.svelte';
+
+	let { styles, selectedStyleId, disabled, onSelect, onSave, saveMessage = '' } = $props();
 
 	let isCreating = $state(false);
-	let name = $state('');
-	let description = $state('');
-	let instructions = $state('');
-	let favorite = $state(false);
-	let errorMessage = $state('');
+	let editingStyle = $state();
 
 	let selectedStyle = $derived(styles.find((style) => style.id === selectedStyleId));
-
-	const resetForm = () => {
-		name = '';
-		description = '';
-		instructions = '';
-		favorite = false;
-		errorMessage = '';
-	};
+	let defaultStyles = $derived(styles.filter((style) => !style.custom));
+	let customStyles = $derived(styles.filter((style) => style.custom));
+	let formKey = $derived(editingStyle?.id ?? 'new-style');
 
 	const closeForm = () => {
 		isCreating = false;
-		resetForm();
+		editingStyle = undefined;
 	};
 
-	const saveStyle = () => {
-		const trimmedName = name.trim();
-		const trimmedDescription = description.trim();
-		const trimmedInstructions = instructions.trim();
+	const openCreateForm = () => {
+		editingStyle = undefined;
+		isCreating = true;
+	};
 
-		if (!trimmedName || !trimmedDescription || !trimmedInstructions) {
-			errorMessage = '이름, 설명, 프롬프트 내용을 모두 입력해 주세요.';
-			return;
-		}
+	const openEditForm = (style) => {
+		editingStyle = style;
+		isCreating = true;
+	};
 
-		onSave?.({
-			name: trimmedName,
-			description: trimmedDescription,
-			instructions: trimmedInstructions,
-			favorite
-		});
+	const saveStyle = async (style) => {
+		await onSave?.(style);
 		closeForm();
 	};
 </script>
@@ -49,7 +39,7 @@
 			<p>Coach Style</p>
 			<h2 id="style-title">AI 코치 스타일</h2>
 		</div>
-		<span>{selectedStyle?.name ?? '선택 없음'}</span>
+		<span>{selectedStyle ? `${selectedStyle.icon ?? '🎙️'} ${selectedStyle.name}` : '선택 없음'}</span>
 	</header>
 
 	<div class="toolbar">
@@ -60,84 +50,65 @@
 			</svg>
 			<span>스타일 검색</span>
 		</div>
-		<button class="new-button" type="button" disabled={disabled} onclick={() => (isCreating = true)}>
+		<button class="new-button" type="button" disabled={disabled} onclick={openCreateForm}>
 			새 스타일
 		</button>
 	</div>
 
 	{#if isCreating}
-		<section class="create-form" aria-label="새 AI 코치 스타일 만들기">
-			<h3>새 스타일 만들기</h3>
+		{#key formKey}
+			<CoachStyleForm
+				{disabled}
+				initialStyle={editingStyle}
+				onCancel={closeForm}
+				onSave={saveStyle}
+			/>
+		{/key}
+	{/if}
 
-			<label>
-				<span>이름 *</span>
-				<input
-					bind:value={name}
-					disabled={disabled}
-					maxlength="40"
-					placeholder="스타일 이름을 입력하세요"
+	{#if saveMessage}
+		<p class="save-message">{saveMessage}</p>
+	{/if}
+
+	<section class="default-style-section" aria-label="기본 AI 코치 스타일">
+		<div class="section-title">
+			<h3>기본 스타일</h3>
+			<span>2x2</span>
+		</div>
+
+		<div class="default-style-grid">
+			{#each defaultStyles as style (style.id)}
+				<CoachStyleCard
+					{disabled}
+					{style}
+					selected={style.id === selectedStyleId}
+					variant="default"
+					onSelect={onSelect}
 				/>
-			</label>
+			{/each}
+		</div>
+	</section>
 
-			<label>
-				<span>설명 *</span>
-				<input
-					bind:value={description}
-					disabled={disabled}
-					maxlength="90"
-					placeholder="스타일에 대한 간단한 설명"
-				/>
-			</label>
+	{#if customStyles.length}
+		<section class="custom-style-section" aria-label="직접 만든 AI 코치 스타일">
+			<div class="section-title">
+				<h3>직접 만든 스타일</h3>
+				<span>{customStyles.length}개</span>
+			</div>
 
-			<label>
-				<span>프롬프트 내용 *</span>
-				<small>{instructions.length}/2000자</small>
-				<textarea
-					bind:value={instructions}
-					disabled={disabled}
-					maxlength="2000"
-					placeholder="AI 코치의 성격과 교육 방식을 자세히 설명해 주세요."
-				></textarea>
-			</label>
-
-			<label class="favorite-row">
-				<input type="checkbox" bind:checked={favorite} disabled={disabled} />
-				<span>즐겨찾기에 추가</span>
-			</label>
-
-			{#if errorMessage}
-				<p class="form-error">{errorMessage}</p>
-			{/if}
-
-			<div class="form-actions">
-				<button class="save-button" type="button" disabled={disabled} onclick={saveStyle}>저장하기</button>
-				<button class="cancel-button" type="button" onclick={closeForm}>취소</button>
+			<div class="style-list">
+				{#each customStyles as style (style.id)}
+					<CoachStyleCard
+						{disabled}
+						{style}
+						selected={style.id === selectedStyleId}
+						onEdit={openEditForm}
+						onSelect={onSelect}
+					/>
+				{/each}
 			</div>
 		</section>
 	{/if}
-
-	<div class="style-list">
-		{#each styles as style (style.id)}
-			<article class:selected={style.id === selectedStyleId} class="style-card">
-				<div class="card-head">
-					<div>
-						<strong>{style.name}</strong>
-						<span>{style.badge}</span>
-					</div>
-					{#if style.favorite}
-						<small>즐겨찾기</small>
-					{/if}
-				</div>
-
-				<p>{style.description}</p>
-				<div class="prompt-preview">{style.instructions}</div>
-
-				<button type="button" disabled={disabled} onclick={() => onSelect?.(style.id)}>
-					{style.id === selectedStyleId ? '선택됨' : '이 스타일 사용하기'}
-				</button>
-			</article>
-		{/each}
-	</div>
 
 	<p class="hint">
 		{#if disabled}
@@ -228,15 +199,14 @@
 		stroke-linecap: round;
 	}
 
-	button,
-	input,
-	textarea {
-		font: inherit;
-	}
-
 	button {
-		border-radius: 8px;
+		min-height: 44px;
+		padding: 0 15px;
 		border: 0;
+		border-radius: 8px;
+		background: #1f8b7c;
+		color: white;
+		font: inherit;
 		font-weight: 900;
 		cursor: pointer;
 	}
@@ -246,151 +216,19 @@
 		opacity: 0.66;
 	}
 
-	.new-button,
-	.save-button {
-		min-height: 44px;
-		padding: 0 15px;
-		background: #1f8b7c;
-		color: white;
-	}
-
-	.create-form {
-		display: grid;
-		gap: 14px;
-		padding: 16px;
-		border-radius: 8px;
-		background: rgba(230, 246, 241, 0.8);
-		box-shadow: inset 0 0 0 1px rgba(31, 139, 124, 0.14);
-	}
-
 	h3 {
 		font-size: 1rem;
 		font-weight: 900;
 	}
 
-	label {
-		display: grid;
-		gap: 8px;
-	}
-
-	label > span {
-		font-size: 0.9rem;
-		font-weight: 900;
-	}
-
-	label small {
-		justify-self: end;
-		margin-top: -26px;
-		color: #66737a;
-		font-size: 0.82rem;
-		font-weight: 800;
-	}
-
-	input:not([type='checkbox']),
-	textarea {
-		width: 100%;
-		border: 1px solid #d8e0e2;
-		border-radius: 8px;
-		background: #fbfefd;
-		color: #1f2428;
-	}
-
-	input:not([type='checkbox']) {
-		min-height: 44px;
-		padding: 0 12px;
-	}
-
-	textarea {
-		min-height: 128px;
-		resize: vertical;
-		padding: 12px;
-		line-height: 1.55;
-	}
-
-	input:focus,
-	textarea:focus {
-		outline: 3px solid rgba(31, 139, 124, 0.18);
-		border-color: #1f8b7c;
-	}
-
-	.favorite-row {
+	.section-title {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-	}
-
-	.favorite-row input {
-		width: 16px;
-		height: 16px;
-	}
-
-	.form-error {
-		margin: 0;
-		padding: 10px 12px;
-		border-radius: 8px;
-		background: #fff0ee;
-		color: #a2362e;
-		font-weight: 800;
-	}
-
-	.form-actions {
-		display: grid;
-		grid-template-columns: 1fr auto;
-		gap: 10px;
-	}
-
-	.cancel-button {
-		min-height: 44px;
-		padding: 0 15px;
-		border: 1px solid rgba(35, 65, 70, 0.12);
-		background: rgba(255, 255, 255, 0.72);
-		color: #4d5a60;
-	}
-
-	.style-list {
-		max-height: 480px;
-		overflow: auto;
-		display: grid;
-		gap: 12px;
-	}
-
-	.style-card {
-		display: grid;
-		gap: 10px;
-		padding: 15px;
-		border: 1px solid rgba(35, 65, 70, 0.1);
-		border-radius: 8px;
-		background: rgba(255, 255, 255, 0.82);
-		box-shadow: 0 10px 24px rgba(33, 50, 56, 0.06);
-	}
-
-	.style-card.selected {
-		border-color: rgba(31, 139, 124, 0.42);
-		background: #f8fdfb;
-	}
-
-	.card-head {
-		display: flex;
-		align-items: start;
 		justify-content: space-between;
 		gap: 12px;
 	}
 
-	.card-head div {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap;
-	}
-
-	.card-head strong {
-		font-size: 0.98rem;
-		font-weight: 900;
-		line-height: 1.25;
-	}
-
-	.card-head span,
-	.card-head small {
+	.section-title span {
 		padding: 4px 8px;
 		border-radius: 999px;
 		background: #edf5f3;
@@ -400,36 +238,34 @@
 		white-space: nowrap;
 	}
 
-	.style-card p {
+	.save-message {
 		margin: 0;
-		color: #5f6970;
-		font-size: 0.9rem;
-		line-height: 1.5;
-		word-break: keep-all;
-	}
-
-	.prompt-preview {
-		max-height: 92px;
-		overflow: auto;
-		padding: 10px;
+		padding: 10px 12px;
 		border-radius: 8px;
-		background: rgba(237, 245, 243, 0.72);
-		color: #4d5a60;
-		font-size: 0.84rem;
-		line-height: 1.5;
-		white-space: pre-wrap;
+		background: #eef8f5;
+		color: #187064;
+		font-size: 0.86rem;
+		font-weight: 800;
+		line-height: 1.45;
 	}
 
-	.style-card > button {
-		min-height: 42px;
-		background: #dce9e7;
-		color: #4d5a60;
+	.default-style-section,
+	.custom-style-section {
+		display: grid;
+		gap: 12px;
 	}
 
-	.style-card.selected > button,
-	.style-card > button:hover:not(:disabled) {
-		background: #1f8b7c;
-		color: white;
+	.default-style-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.style-list {
+		max-height: 480px;
+		overflow: auto;
+		display: grid;
+		gap: 12px;
 	}
 
 	.hint {
@@ -442,7 +278,7 @@
 
 	@media (max-width: 560px) {
 		.toolbar,
-		.form-actions {
+		.default-style-grid {
 			grid-template-columns: 1fr;
 		}
 	}

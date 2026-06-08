@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { env as privateEnv } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import { createUser, normalizeEmail, startSession, validatePassword } from '$lib/server/auth.js';
+import { loadUserProfile } from '$lib/server/user-profile.js';
 
 function getEmailRedirectTo(url) {
 	const siteUrl = (privateEnv.PUBLIC_SITE_URL || publicEnv.PUBLIC_SITE_URL)?.trim().replace(/\/$/, '');
@@ -36,8 +37,13 @@ function getRegisterErrorMessage(error) {
 	return `회원가입을 완료하지 못했어요. Supabase 응답: ${error?.message ?? '알 수 없는 오류'}`;
 }
 
-export function load({ locals }) {
+export async function load({ locals }) {
 	if (locals.user) {
+		const profileStatus = await loadUserProfile(locals.user);
+		if (!profileStatus.onboardingCompleted) {
+			throw redirect(303, '/onboarding');
+		}
+
 		throw redirect(303, '/');
 	}
 }
@@ -89,6 +95,6 @@ export const actions = {
 			return fail(400, { email, error: getRegisterErrorMessage(error) });
 		}
 
-		throw redirect(303, '/');
+		throw redirect(303, '/onboarding');
 	}
 };

@@ -1,31 +1,31 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { requireLogin } from '$lib/server/auth.js';
-import { loadConversationRecords } from '$lib/server/conversation-records.js';
-import { loadPromptStyles } from '$lib/server/prompt-styles.js';
-import { loadUserProfile, saveUserOnboarding } from '$lib/server/user-profile.js';
+import {
+	loadUserProfile,
+	PRIVACY_POLICY_VERSION,
+	saveUserOnboarding,
+	TERMS_VERSION
+} from '$lib/server/user-profile.js';
 
 export async function load({ locals }) {
 	requireLogin(locals);
-	const [profileStatus, records, promptStyles] = await Promise.all([
-		loadUserProfile(locals.user),
-		loadConversationRecords(locals.user),
-		loadPromptStyles(locals.user)
-	]);
 
-	if (!profileStatus.onboardingCompleted) {
-		throw redirect(303, '/onboarding');
+	const profileStatus = await loadUserProfile(locals.user);
+	if (profileStatus.onboardingCompleted) {
+		throw redirect(303, '/');
 	}
 
 	return {
 		user: locals.user,
 		profile: profileStatus.profile,
-		...records,
-		...promptStyles
+		profilePersistenceEnabled: profileStatus.profilePersistenceEnabled,
+		termsVersion: TERMS_VERSION,
+		privacyPolicyVersion: PRIVACY_POLICY_VERSION
 	};
 }
 
 export const actions = {
-	profile: async ({ locals, request }) => {
+	default: async ({ locals, request }) => {
 		requireLogin(locals);
 
 		const formData = await request.formData();
@@ -37,6 +37,8 @@ export const actions = {
 		const learningGoal = String(formData.get('learningGoal') ?? '');
 		const practiceFrequency = String(formData.get('practiceFrequency') ?? '');
 		const interestSituations = formData.getAll('interestSituations').map(String);
+		const termsAgreed = formData.get('termsAgreed') === 'on';
+		const privacyPolicyAgreed = formData.get('privacyPolicyAgreed') === 'on';
 
 		try {
 			await saveUserOnboarding(locals.user, {
@@ -48,12 +50,11 @@ export const actions = {
 				learningGoal,
 				practiceFrequency,
 				interestSituations,
-				termsAgreed: true,
-				privacyPolicyAgreed: true
+				termsAgreed,
+				privacyPolicyAgreed
 			});
 		} catch (error) {
 			return fail(400, {
-				formName: 'profile',
 				displayName,
 				ageRange,
 				occupation,
@@ -62,13 +63,12 @@ export const actions = {
 				learningGoal,
 				practiceFrequency,
 				interestSituations,
-				error: error instanceof Error ? error.message : '사용자 정보를 저장하지 못했습니다.'
+				termsAgreed,
+				privacyPolicyAgreed,
+				error: error instanceof Error ? error.message : '동의 정보를 저장하지 못했습니다.'
 			});
 		}
 
-		return {
-			formName: 'profile',
-			success: '사용자 정보를 저장했습니다.'
-		};
+		throw redirect(303, '/');
 	}
 };

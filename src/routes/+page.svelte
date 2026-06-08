@@ -1,15 +1,19 @@
 <script>
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import ApiUsagePanel from '$lib/components/ApiUsagePanel.svelte';
 	import CoachStylePanel from '$lib/components/CoachStylePanel.svelte';
 	import ConnectionSafetyStatus from '$lib/components/ConnectionSafetyStatus.svelte';
 	import ConversationLog from '$lib/components/ConversationLog.svelte';
 	import DebugPanel from '$lib/components/DebugPanel.svelte';
+	import UserProfilePanel from '$lib/components/UserProfilePanel.svelte';
 	import VoiceVisualizer from '$lib/components/VoiceVisualizer.svelte';
+	import { saveConversationRecord } from '$lib/client/conversation-records.js';
+	import { savePromptStyle } from '$lib/client/prompt-styles.js';
+	import { defaultCoachStyles } from '$lib/coach-styles.js';
 	import { createWaveformAnalyzer, RESTING_WAVE_BARS } from '$lib/realtime/audio-waveform.js';
 	import { createRealtimeVoiceSession } from '$lib/realtime/realtime-session.js';
 
-	let { data } = $props();
+	let { data, form } = $props();
 
 	let elapsedSeconds = $state(0);
 	let statusMessage = $state('시작 버튼을 누르고 영어로 편하게 말해보세요.');
@@ -17,59 +21,28 @@
 	let isConnecting = $state(false);
 	let isConnected = $state(false);
 	let waveBars = $state([...RESTING_WAVE_BARS]);
-	let conversationSessions = $state(data.conversationSessions ?? []);
-	let activeSessionId = $state(data.conversationSessions?.[0]?.id ?? '');
+	let conversationSessions = $state(untrack(() => data.conversationSessions ?? []));
+	let activeSessionId = $state(untrack(() => data.conversationSessions?.[0]?.id ?? ''));
 	let recordingSessionId = $state('');
 	let assistantDraft = $state('');
 	let debugEntries = $state([]);
 	let closureCheck = $state();
 	let selectedCoachStyleId = $state('friendly');
-	let customCoachStyles = $state([]);
+	let customCoachStyles = $state(untrack(() => data.promptStyles ?? []));
+	let styleSaveMessage = $state('');
 	let activeWorkspaceTab = $state('history');
-	let activePage = $state('conversation');
+	let activePage = $state(untrack(() => (form?.formName === 'profile' ? 'profile' : 'conversation')));
 	let isMenuOpen = $state(false);
-	let persistenceEnabled = $state(Boolean(data.persistenceEnabled));
+	let persistenceEnabled = $state(untrack(() => Boolean(data.persistenceEnabled)));
+	let promptStylePersistenceEnabled = $state(
+		untrack(() => Boolean(data.promptStylePersistenceEnabled))
+	);
 
 	let connectedStartedAt = 0;
 	let timer;
 	let closureCheckTimer;
 	let realtimeSession;
 	let waveformAnalyzer;
-
-	const defaultCoachStyles = [
-		{
-			id: 'friendly',
-			name: '친근한 선생님',
-			badge: '기본',
-			description: '편안한 대화를 이어가며 짧게 교정해요.',
-			instructions:
-				'따뜻하고 친근한 선생님처럼 대화해 주세요. 사용자의 말을 먼저 자연스럽게 이어받고, 답변 끝에 틀린 표현이 있으면 한국어로 한 가지를 짧게 교정해 주세요.'
-		},
-		{
-			id: 'strict',
-			name: '꼼꼼한 교정',
-			badge: '정확도',
-			description: '문법과 표현을 더 자주 짚어주는 스타일이에요.',
-			instructions:
-				'정확한 문법과 표현 교정에 집중해 주세요. 대화를 끊지 말고 먼저 짧게 답한 뒤, 문법과 어휘, 더 자연스러운 표현을 한국어로 명확히 설명해 주세요.'
-		},
-		{
-			id: 'business',
-			name: '비즈니스 회화',
-			badge: '업무',
-			description: '회의, 이메일, 발표에 맞는 표현을 연습해요.',
-			instructions:
-				'비즈니스 영어 상황에 맞춰 회의, 발표, 이메일, 협업 표현을 연습해 주세요. 전문적이고 자연스러운 업무 표현을 우선 추천해 주세요.'
-		},
-		{
-			id: 'travel',
-			name: '여행 회화',
-			badge: '실전',
-			description: '공항, 호텔, 식당 같은 상황을 자주 다뤄요.',
-			instructions:
-				'여행 영어 상황에 맞춰 공항, 호텔, 식당, 쇼핑, 길 묻기 표현을 자주 연습해 주세요. 실제 여행에서 바로 쓸 수 있는 짧은 문장을 제안해 주세요.'
-		}
-	];
 
 	let coachStyles = $derived([...defaultCoachStyles, ...customCoachStyles]);
 	let selectedCoachStyle = $derived(
@@ -80,9 +53,10 @@
 		selectedCoachStyleId = styleId;
 	};
 
-	const saveCustomCoachStyle = ({ name, description, instructions, favorite }) => {
+	const saveCustomCoachStyle = async ({ id, name, description, instructions, favorite }) => {
 		const style = {
-			id: crypto.randomUUID(),
+			id: id ?? crypto.randomUUID(),
+			icon: '✨',
 			name,
 			badge: favorite ? '즐겨찾기' : '직접 설정',
 			description,
@@ -91,8 +65,28 @@
 			custom: true
 		};
 
-		customCoachStyles = [style, ...customCoachStyles];
-		selectedCoachStyleId = style.id;
+		if (!promptStylePersistenceEnabled) {
+			styleSaveMessage = 'DB 연결이 없어 현재 브라우저에서만 임시 저장됩니다.';
+			customCoachStyles = [
+				style,
+				...customCoachStyles.filter((coachStyle) => coachStyle.id !== style.id)
+			];
+			selectedCoachStyleId = style.id;
+			return;
+		}
+
+		try {
+			const savedStyle = await savePromptStyle(style);
+			customCoachStyles = [
+				savedStyle,
+				...customCoachStyles.filter((coachStyle) => coachStyle.id !== savedStyle.id)
+			];
+			selectedCoachStyleId = savedStyle.id;
+			styleSaveMessage = id ? '프롬프트 스타일을 수정했습니다.' : '프롬프트 스타일을 저장했습니다.';
+		} catch (error) {
+			styleSaveMessage =
+				error instanceof Error ? error.message : '프롬프트 스타일 저장에 실패했습니다.';
+		}
 	};
 
 	const buildCoachStylePayload = () => ({
@@ -107,18 +101,7 @@
 		}
 
 		try {
-			const response = await fetch('/api/conversation-records', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({ session })
-			});
-
-			if (!response.ok) {
-				const data = await response.json().catch(() => ({}));
-				throw new Error(data.error ?? '대화 기록 저장에 실패했습니다.');
-			}
+			await saveConversationRecord(session);
 		} catch (error) {
 			addDebugEntry({
 				level: 'error',
@@ -471,6 +454,7 @@
 				{#if isMenuOpen}
 					<nav class="menu-popover" aria-label="사용자 메뉴">
 						<p>안녕하세요, {data.user.email}님</p>
+						<button type="button" onclick={() => openPage('profile')}>사용자 정보</button>
 						<button type="button" onclick={() => openPage('usage')}>사용량 통계</button>
 						<form method="POST" action="/auth/logout">
 							<button type="submit">로그아웃</button>
@@ -485,6 +469,8 @@
 				sessions={conversationSessions}
 				currentElapsedSeconds={isConnected || isConnecting ? elapsedSeconds : 0}
 			/>
+		{:else if activePage === 'profile'}
+			<UserProfilePanel profile={data.profile} profileForm={form} user={data.user} />
 		{:else}
 			<div class="intro">
 				<div class="title-row">
@@ -563,6 +549,7 @@
 							disabled={isConnected || isConnecting}
 							onSelect={selectCoachStyle}
 							onSave={saveCustomCoachStyle}
+							saveMessage={styleSaveMessage}
 						/>
 					</div>
 				{/if}
@@ -825,6 +812,7 @@
 		padding: 13px 15px;
 		border-radius: 8px;
 		font-size: 0.95rem;
+		text-align: center;
 	}
 
 	.status {

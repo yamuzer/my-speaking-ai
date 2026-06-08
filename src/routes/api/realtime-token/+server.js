@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
+import { loadUserProfile } from '$lib/server/user-profile.js';
 
 const SESSION_INSTRUCTIONS = `
 You are a low-latency English conversation coach for a Korean learner.
@@ -14,13 +15,93 @@ const normalizeText = (value, maxLength = 900) =>
 		.trim()
 		.slice(0, maxLength);
 
-const buildSessionInstructions = (coachStyle) => {
+const labelMaps = {
+	ageRange: {
+		teen: 'teenager',
+		'20s': 'in their 20s',
+		'30s': 'in their 30s',
+		'40s': 'in their 40s',
+		'50s_plus': 'in their 50s or older'
+	},
+	englishLevel: {
+		beginner: 'beginner',
+		intermediate: 'intermediate',
+		advanced: 'advanced'
+	},
+	learningPurpose: {
+		daily: 'daily conversation',
+		business: 'business English',
+		interview: 'interview preparation',
+		travel: 'travel English',
+		exam: 'exam or certification preparation',
+		academic: 'study abroad or academic English',
+		other: 'another personal goal'
+	},
+	practiceFrequency: {
+		daily: 'daily practice',
+		weekly_3: 'practice three or more times a week',
+		weekly_1: 'weekly practice',
+		occasional: 'occasional practice'
+	},
+	interestSituations: {
+		daily_chat: 'daily chat',
+		meeting: 'meetings and work conversations',
+		presentation: 'presentations',
+		interview: 'interviews',
+		travel: 'travel situations',
+		small_talk: 'small talk'
+	}
+};
+
+const mapLabel = (group, value) => labelMaps[group]?.[value] ?? normalizeText(value, 80);
+
+const buildProfileInstructions = (profile) => {
+	if (!profile) {
+		return '';
+	}
+
+	const interestSituations = Array.isArray(profile.interestSituations)
+		? profile.interestSituations.map((value) => mapLabel('interestSituations', value)).filter(Boolean)
+		: [];
+	const details = [
+		profile.displayName ? `Name or nickname: ${normalizeText(profile.displayName, 60)}.` : '',
+		profile.ageRange ? `Age range: ${mapLabel('ageRange', profile.ageRange)}.` : '',
+		profile.occupation ? `Occupation or role: ${normalizeText(profile.occupation, 100)}.` : '',
+		profile.englishLevel ? `English level: ${mapLabel('englishLevel', profile.englishLevel)}.` : '',
+		profile.learningPurpose
+			? `Primary learning purpose: ${mapLabel('learningPurpose', profile.learningPurpose)}.`
+			: '',
+		profile.practiceFrequency
+			? `Expected practice rhythm: ${mapLabel('practiceFrequency', profile.practiceFrequency)}.`
+			: '',
+		interestSituations.length
+			? `Interested practice situations: ${interestSituations.join(', ')}.`
+			: '',
+		profile.learningGoal ? `Specific learning goal: ${normalizeText(profile.learningGoal, 320)}.` : ''
+	].filter(Boolean);
+
+	if (!details.length) {
+		return '';
+	}
+
+	return [
+		'User onboarding profile:',
+		...details,
+		'Use this profile to choose realistic role-play scenarios, vocabulary, and correction depth.',
+		'Adapt difficulty to the user level: simpler vocabulary and slower pacing for beginners, richer expressions for advanced users.',
+		'Do not mention private profile fields unless they are relevant to the conversation or the user asks.'
+	].join('\n');
+};
+
+const buildSessionInstructions = ({ coachStyle, profile }) => {
 	const styleName = normalizeText(coachStyle?.name, 80);
 	const styleInstructions = normalizeText(coachStyle?.instructions);
 	const customInstructions = normalizeText(coachStyle?.customInstructions);
+	const profileInstructions = buildProfileInstructions(profile);
 
 	return [
 		SESSION_INSTRUCTIONS,
+		profileInstructions,
 		styleName ? `Selected coach style: ${styleName}.` : '',
 		styleInstructions ? `Coach style instructions: ${styleInstructions}` : '',
 		customInstructions ? `User custom instructions: ${customInstructions}` : '',
@@ -45,7 +126,11 @@ async function createRealtimeToken({ locals, coachStyle }) {
 		);
 	}
 
-	const instructions = buildSessionInstructions(coachStyle);
+	const profileStatus = await loadUserProfile(locals.user);
+	const instructions = buildSessionInstructions({
+		coachStyle,
+		profile: profileStatus.onboardingCompleted ? profileStatus.profile : null
+	});
 
 	const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
 		method: 'POST',
