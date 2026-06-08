@@ -14,6 +14,58 @@
 		ended: '종료됨',
 		failed: '실패'
 	};
+
+	const formatNumber = (value) => new Intl.NumberFormat('ko-KR').format(Number(value ?? 0));
+	const estimateTextTokens = (text) =>
+		Math.max(1, Math.ceil(String(text ?? '').trim().length / 4));
+
+	const getUsageRows = (item) => {
+		const usage = item.usage ?? {};
+		const estimatedTokens = estimateTextTokens(item.text);
+		const hasUsage = Boolean(item.usage);
+		const rows = [];
+
+		if (item.role === 'user') {
+			rows.push({
+				label: '입력',
+				model: item.model ?? 'gpt-realtime-2',
+				tokens: usage.inputTokens ?? usage.totalTokens ?? estimatedTokens,
+				detail: usage.inputAudioTokens
+					? `audio ${formatNumber(usage.inputAudioTokens)}`
+					: usage.inputTextTokens
+						? `text ${formatNumber(usage.inputTextTokens)}`
+						: usage.source === 'estimated' || !hasUsage
+							? '추정'
+							: ''
+			});
+
+			if (item.transcriptionModel) {
+				rows.push({
+					label: '전사',
+					model: item.transcriptionModel,
+					tokens: 0,
+					detail: '모델 사용'
+				});
+			}
+
+			return rows;
+		}
+
+		rows.push({
+			label: '출력',
+			model: item.model ?? 'gpt-realtime-2',
+			tokens: usage.outputTokens ?? usage.totalTokens ?? estimatedTokens,
+			detail: usage.outputAudioTokens
+				? `audio ${formatNumber(usage.outputAudioTokens)}`
+				: usage.outputTextTokens
+					? `text ${formatNumber(usage.outputTextTokens)}`
+					: usage.source === 'estimated' || !hasUsage
+						? '추정'
+						: ''
+		});
+
+		return rows;
+	};
 </script>
 
 <section class="conversation" aria-label="대화 기록">
@@ -87,6 +139,20 @@
 							<div class="bubble">
 								<span>{item.role === 'user' ? '내 음성' : 'AI 코치'} · {item.time}</span>
 								<p>{item.text}</p>
+								<div class="usage-meta" aria-label="모델 및 토큰 사용량">
+									{#each getUsageRows(item) as row}
+										<small>
+											<b>{row.label}</b>
+											<em>{row.model}</em>
+											{#if row.tokens}
+												<i>{formatNumber(row.tokens)} tokens</i>
+											{/if}
+											{#if row.detail}
+												<i>{row.detail}</i>
+											{/if}
+										</small>
+									{/each}
+								</div>
 							</div>
 						</article>
 					{/each}
@@ -372,6 +438,43 @@
 
 	.bubble p {
 		margin: 0;
+	}
+
+	.usage-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 10px;
+	}
+
+	.usage-meta small {
+		min-height: 24px;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0 8px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.72);
+		color: #4d5a60;
+		font-size: 0.72rem;
+		font-weight: 850;
+		line-height: 1;
+		text-transform: none;
+	}
+
+	.usage-meta b,
+	.usage-meta em,
+	.usage-meta i {
+		font-style: normal;
+	}
+
+	.usage-meta b {
+		color: #187064;
+		font-weight: 950;
+	}
+
+	.usage-meta i {
+		color: #66737a;
 	}
 
 	.item-user .bubble {

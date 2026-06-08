@@ -1,5 +1,6 @@
 <script>
 	import { untrack } from 'svelte';
+	import PolicyViewer from './PolicyViewer.svelte';
 
 	let { profile, profileForm, user } = $props();
 
@@ -75,6 +76,9 @@
 	let editableInterestSituations = $state(
 		untrack(() => profileForm?.interestSituations ?? profile?.interestSituations ?? [])
 	);
+
+	let showPolicyViewer = $state(false);
+	let currentPolicyType = $state('privacy');
 
 	let interestSituations = $derived(
 		Array.isArray(profile?.interestSituations) ? profile.interestSituations : []
@@ -252,20 +256,50 @@
 			<div>
 				<dt>개인정보 처리방침</dt>
 				<dd>
-					{formatDateTime(profile?.privacyPolicyAgreedAt)}
-					<small>버전 {profile?.privacyPolicyVersion ?? '-'}</small>
+					<div class="consent-item">
+						<div>
+							{formatDateTime(profile?.privacyPolicyAgreedAt)}
+							<small>버전 {profile?.privacyPolicyVersion ?? '-'}</small>
+						</div>
+						<button
+							class="view-button"
+							type="button"
+							onclick={() => {
+								currentPolicyType = 'privacy';
+								showPolicyViewer = true;
+							}}
+						>
+							보기
+						</button>
+					</div>
 				</dd>
 			</div>
 			<div>
 				<dt>서비스 이용약관</dt>
 				<dd>
-					{formatDateTime(profile?.termsAgreedAt)}
-					<small>버전 {profile?.termsVersion ?? '-'}</small>
+					<div class="consent-item">
+						<div>
+							{formatDateTime(profile?.termsAgreedAt)}
+							<small>버전 {profile?.termsVersion ?? '-'}</small>
+						</div>
+						<button
+							class="view-button"
+							type="button"
+							onclick={() => {
+								currentPolicyType = 'terms';
+								showPolicyViewer = true;
+							}}
+						>
+							보기
+						</button>
+					</div>
 				</dd>
 			</div>
 		</dl>
 	</section>
 </section>
+
+<PolicyViewer isOpen={showPolicyViewer} policyType={currentPolicyType} />
 
 <style>
 	.profile-panel {
@@ -590,6 +624,44 @@
 		border-bottom: 0;
 	}
 
+	.consent-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		width: 100%;
+	}
+
+	.consent-item > div {
+		display: grid;
+		gap: 3px;
+		flex: 1;
+	}
+
+	.view-button {
+		min-height: 32px;
+		padding: 0 12px;
+		border: 1px solid rgba(31, 139, 124, 0.3);
+		border-radius: 6px;
+		background: rgba(31, 139, 124, 0.08);
+		color: #1f8b7c;
+		font: inherit;
+		font-size: 0.84rem;
+		font-weight: 900;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all 0.2s;
+	}
+
+	.view-button:hover {
+		background: rgba(31, 139, 124, 0.15);
+		border-color: rgba(31, 139, 124, 0.5);
+	}
+
+	.view-button:active {
+		background: rgba(31, 139, 124, 0.2);
+	}
+
 	.consent-list dd {
 		display: grid;
 		gap: 3px;
@@ -628,6 +700,11 @@
 		.consent-list div {
 			align-items: start;
 			flex-direction: column;
+		}
+
+		.consent-item {
+			flex-direction: column;
+			align-items: flex-start;
 		}
 
 		.consent-list dd {

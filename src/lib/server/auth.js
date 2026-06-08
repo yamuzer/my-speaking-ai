@@ -7,14 +7,22 @@ const SESSION_COOKIE = 'auth_session';
 const REFRESH_COOKIE = 'auth_refresh';
 const SESSION_DAYS = 30;
 const SESSION_MAX_AGE = 60 * 60 * 24 * SESSION_DAYS;
-const SUPABASE_URL = privateEnv.SUPABASE_URL || publicEnv.PUBLIC_SUPABASE_URL;
+function cleanEnvValue(value) {
+	return String(value ?? '')
+		.replace(/\uFEFF/g, '')
+		.trim();
+}
+
+const SUPABASE_URL = cleanEnvValue(privateEnv.SUPABASE_URL || publicEnv.PUBLIC_SUPABASE_URL);
 const SUPABASE_PUBLIC_KEY =
-	privateEnv.SUPABASE_ANON_KEY ||
-	privateEnv.SUPABASE_PUBLISHABLE_KEY ||
-	privateEnv.SUPABASE_KEY ||
-	publicEnv.PUBLIC_SUPABASE_ANON_KEY ||
-	publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-const SUPABASE_AUTH_KEY = SUPABASE_PUBLIC_KEY || privateEnv.SUPABASE_SERVICE_KEY;
+	cleanEnvValue(
+		privateEnv.SUPABASE_ANON_KEY ||
+			privateEnv.SUPABASE_PUBLISHABLE_KEY ||
+			privateEnv.SUPABASE_KEY ||
+			publicEnv.PUBLIC_SUPABASE_ANON_KEY ||
+			publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY
+	);
+const SUPABASE_AUTH_KEY = SUPABASE_PUBLIC_KEY || cleanEnvValue(privateEnv.SUPABASE_SERVICE_KEY);
 
 function normalizeSupabaseUrl(url) {
 	try {

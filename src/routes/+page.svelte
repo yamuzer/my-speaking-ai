@@ -44,6 +44,10 @@
 	let realtimeSession;
 	let waveformAnalyzer;
 
+	const REALTIME_MODEL = 'gpt-realtime-2';
+	const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
+	const ESTIMATED_CHARS_PER_TOKEN = 4;
+
 	let coachStyles = $derived([...defaultCoachStyles, ...customCoachStyles]);
 	let selectedCoachStyle = $derived(
 		coachStyles.find((style) => style.id === selectedCoachStyleId) ?? coachStyles[0]
@@ -218,7 +222,47 @@
 		];
 	};
 
-	const addConversationItem = (role, text) => {
+	const estimateTextTokens = (text) =>
+		Math.max(1, Math.ceil(String(text ?? '').trim().length / ESTIMATED_CHARS_PER_TOKEN));
+
+	const buildEstimatedUsage = (role, text) => {
+		const tokens = estimateTextTokens(text);
+
+		return {
+			source: 'estimated',
+			inputTokens: role === 'user' ? tokens : 0,
+			outputTokens: role === 'assistant' ? tokens : 0,
+			totalTokens: tokens
+		};
+	};
+
+	const buildUsageMetadata = (role, text, usage) => {
+		if (!usage) {
+			return {
+				model: role === 'user' ? TRANSCRIPTION_MODEL : REALTIME_MODEL,
+				usage: buildEstimatedUsage(role, text)
+			};
+		}
+
+		const inputDetails = usage.input_token_details ?? {};
+		const outputDetails = usage.output_token_details ?? {};
+
+		return {
+			model: REALTIME_MODEL,
+			usage: {
+				source: 'api',
+				inputTokens: Number(usage.input_tokens ?? 0),
+				outputTokens: Number(usage.output_tokens ?? 0),
+				totalTokens: Number(usage.total_tokens ?? 0),
+				inputAudioTokens: Number(inputDetails.audio_tokens ?? 0),
+				inputTextTokens: Number(inputDetails.text_tokens ?? 0),
+				outputAudioTokens: Number(outputDetails.audio_tokens ?? 0),
+				outputTextTokens: Number(outputDetails.text_tokens ?? 0)
+			}
+		};
+	};
+
+	const addConversationItem = (role, text, metadata = {}) => {
 		const trimmed = text?.trim();
 
 		if (!trimmed) {
@@ -230,7 +274,9 @@
 			id: crypto.randomUUID(),
 			role,
 			text: trimmed,
-			time: formatSessionTime(new Date())
+			time: formatSessionTime(new Date()),
+			...buildUsageMetadata(role, trimmed),
+			...metadata
 		};
 
 		let updatedSession;
@@ -244,6 +290,60 @@
 				status: session.status === 'preparing' ? 'active' : session.status,
 				messages: [...session.messages, message]
 			};
+			return updatedSession;
+		});
+
+		if (updatedSession) {
+			persistConversationRecord(updatedSession);
+		}
+	};
+
+	const applyRealtimeUsageToLatestTurn = (usage) => {
+		if (!usage || !recordingSessionId) {
+			return;
+		}
+
+		let updatedSession;
+		conversationSessions = conversationSessions.map((session) => {
+			if (session.id !== recordingSessionId) {
+				return session;
+			}
+
+			const messages = [...session.messages];
+			const lastAssistantIndex = messages.findLastIndex((message) => message.role === 'assistant');
+			const lastUserIndex = messages.findLastIndex((message, index) => {
+				return message.role === 'user' && (lastAssistantIndex === -1 || index < lastAssistantIndex);
+			});
+			const usageMetadata = buildUsageMetadata('assistant', messages[lastAssistantIndex]?.text, usage);
+
+			if (lastAssistantIndex !== -1) {
+				messages[lastAssistantIndex] = {
+					...messages[lastAssistantIndex],
+					model: REALTIME_MODEL,
+					usage: {
+						...usageMetadata.usage,
+						inputTokens: 0,
+						inputAudioTokens: 0,
+						inputTextTokens: 0
+					}
+				};
+			}
+
+			if (lastUserIndex !== -1) {
+				messages[lastUserIndex] = {
+					...messages[lastUserIndex],
+					model: REALTIME_MODEL,
+					transcriptionModel: TRANSCRIPTION_MODEL,
+					usage: {
+						...usageMetadata.usage,
+						outputTokens: 0,
+						outputAudioTokens: 0,
+						outputTextTokens: 0
+					}
+				};
+			}
+
+			updatedSession = { ...session, messages };
 			return updatedSession;
 		});
 
@@ -287,6 +387,7 @@
 		}
 
 		if (event.type === 'response.done') {
+			applyRealtimeUsageToLatestTurn(event.response?.usage ?? event.usage);
 			statusMessage = '좋아요. 이어서 말하면 바로 답해드릴게요.';
 			return;
 		}
@@ -468,6 +569,12 @@
 			<ApiUsagePanel
 				sessions={conversationSessions}
 				currentElapsedSeconds={isConnected || isConnecting ? elapsedSeconds : 0}
+				currentSessionId={recordingSessionId}
+				{persistenceEnabled}
+				onOpenConversation={() => {
+					activePage = 'conversation';
+					activeWorkspaceTab = 'history';
+				}}
 			/>
 		{:else if activePage === 'profile'}
 			<UserProfilePanel profile={data.profile} profileForm={form} user={data.user} />
