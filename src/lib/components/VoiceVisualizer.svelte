@@ -36,12 +36,12 @@
 		padding: clamp(20px, 4vw, 30px);
 		border-radius: 8px;
 		background:
-			linear-gradient(180deg, rgba(255, 252, 250, 0.98), rgba(255, 246, 242, 0.92)),
-			#fffafa;
-		border: 1px solid rgba(207, 68, 57, 0.14);
+			linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 249, 247, 0.92)),
+			#fbfefd;
+		border: 1px solid rgba(31, 139, 124, 0.14);
 		box-shadow:
 			inset 0 1px 0 rgba(255, 255, 255, 0.9),
-			0 14px 34px rgba(60, 46, 39, 0.06);
+			0 14px 34px rgba(33, 50, 56, 0.06);
 	}
 
 	.mic-badge {
@@ -51,19 +51,19 @@
 		display: grid;
 		place-items: center;
 		background:
-			radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.98), rgba(255, 248, 246, 0.96)),
+			radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.98), rgba(240, 250, 247, 0.96)),
 			white;
-		border: 1px solid rgba(207, 68, 57, 0.24);
+		border: 1px solid rgba(31, 139, 124, 0.24);
 		box-shadow:
-			0 20px 46px rgba(207, 68, 57, 0.15),
-			inset 0 0 0 10px rgba(207, 68, 57, 0.055);
+			0 20px 46px rgba(31, 139, 124, 0.15),
+			inset 0 0 0 10px rgba(31, 139, 124, 0.055);
 	}
 
 	.mic-icon {
 		width: 76px;
 		height: 76px;
 		fill: none;
-		stroke: #cf4439;
+		stroke: #1f8b7c;
 		stroke-linecap: round;
 		stroke-linejoin: round;
 		stroke-width: 1.9;
@@ -83,10 +83,10 @@
 		gap: 8px;
 		padding: 18px 24px;
 		background:
-			linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 250, 247, 0.78)),
+			linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(241, 249, 247, 0.78)),
 			white;
 		border-radius: 8px;
-		box-shadow: inset 0 0 0 1px rgba(207, 68, 57, 0.08);
+		box-shadow: inset 0 0 0 1px rgba(31, 139, 124, 0.08);
 	}
 
 	.waveform span {
@@ -94,7 +94,7 @@
 		height: var(--bar-height);
 		min-height: 14px;
 		border-radius: 999px;
-		background: linear-gradient(180deg, #ee705f, #cf4439);
+		background: linear-gradient(180deg, #61c8b7, #1f8b7c);
 		opacity: 0.5;
 		transform-origin: center;
 		transition: height 90ms linear;
@@ -114,7 +114,7 @@
 	}
 
 	.meter-copy p {
-		color: #71625b;
+		color: #5f6970;
 		font-size: 0.92rem;
 		font-weight: 850;
 	}
@@ -132,15 +132,15 @@
 		100% {
 			transform: scale(1);
 			box-shadow:
-				0 20px 46px rgba(207, 68, 57, 0.15),
-				0 0 0 0 rgba(207, 68, 57, 0.23);
+				0 20px 46px rgba(31, 139, 124, 0.15),
+				0 0 0 0 rgba(31, 139, 124, 0.23);
 		}
 
 		50% {
 			transform: scale(1.06);
 			box-shadow:
-				0 20px 46px rgba(207, 68, 57, 0.18),
-				0 0 0 18px rgba(207, 68, 57, 0);
+				0 20px 46px rgba(31, 139, 124, 0.18),
+				0 0 0 18px rgba(31, 139, 124, 0);
 		}
 	}
 </style>

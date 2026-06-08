@@ -8,7 +8,33 @@ If the user makes a small grammar or vocabulary mistake, continue the conversati
 then add one brief correction at the end. Do not over-explain unless the user asks.
 `;
 
-export const GET = async () => {
+const normalizeText = (value, maxLength = 900) =>
+	String(value ?? '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, maxLength);
+
+const buildSessionInstructions = (coachStyle) => {
+	const styleName = normalizeText(coachStyle?.name, 80);
+	const styleInstructions = normalizeText(coachStyle?.instructions);
+	const customInstructions = normalizeText(coachStyle?.customInstructions);
+
+	return [
+		SESSION_INSTRUCTIONS,
+		styleName ? `Selected coach style: ${styleName}.` : '',
+		styleInstructions ? `Coach style instructions: ${styleInstructions}` : '',
+		customInstructions ? `User custom instructions: ${customInstructions}` : '',
+		'Always keep the user safe, respectful, and focused on English conversation practice.'
+	]
+		.filter(Boolean)
+		.join('\n');
+};
+
+async function createRealtimeToken({ locals, coachStyle }) {
+	if (!locals.user) {
+		return json({ error: '로그인이 필요합니다.' }, { status: 401 });
+	}
+
 	if (!env.OPENAI_API_KEY) {
 		return json(
 			{
@@ -18,6 +44,8 @@ export const GET = async () => {
 			{ status: 500 }
 		);
 	}
+
+	const instructions = buildSessionInstructions(coachStyle);
 
 	const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
 		method: 'POST',
@@ -30,8 +58,14 @@ export const GET = async () => {
 			session: {
 				type: 'realtime',
 				model: 'gpt-realtime-2',
-				instructions: SESSION_INSTRUCTIONS,
+				instructions,
 				audio: {
+					input: {
+						transcription: {
+							model: 'gpt-4o-transcribe',
+							language: 'en'
+						}
+					},
 					output: {
 						voice: 'marin'
 					}
@@ -56,4 +90,11 @@ export const GET = async () => {
 	}
 
 	return json(data);
+}
+
+export const POST = async ({ locals, request }) => {
+	const body = await request.json().catch(() => ({}));
+	return createRealtimeToken({ locals, coachStyle: body.coachStyle });
 };
+
+export const GET = async ({ locals }) => createRealtimeToken({ locals });

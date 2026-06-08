@@ -29,7 +29,7 @@
 <style>
 	.debug-panel {
 		margin-top: 24px;
-		border-top: 1px solid rgba(34, 31, 28, 0.1);
+		border-top: 1px solid rgba(35, 65, 70, 0.1);
 		padding-top: 18px;
 	}
 
@@ -39,21 +39,21 @@
 		justify-content: space-between;
 		gap: 12px;
 		cursor: pointer;
-		color: #38342f;
+		color: #1f2428;
 		font-weight: 920;
 	}
 
 	summary::marker {
-		color: #d83f36;
+		color: #1f8b7c;
 	}
 
 	summary button {
 		min-height: 34px;
 		padding: 0 12px;
 		border-radius: 8px;
-		border: 1px solid rgba(34, 31, 28, 0.14);
-		background: white;
-		color: #4b5149;
+		border: 1px solid rgba(35, 65, 70, 0.12);
+		background: #f4fbf8;
+		color: #4d5a60;
 		font-size: 0.82rem;
 		font-weight: 850;
 		cursor: pointer;
@@ -72,16 +72,16 @@
 	li {
 		padding: 12px;
 		border-radius: 8px;
-		background: #f8f6f1;
-		border-left: 4px solid #9ba49a;
+		background: #f8fbff;
+		border-left: 4px solid #9aaeb1;
 	}
 
 	li.success {
-		border-left-color: #2f8a5f;
+		border-left-color: #1f8b7c;
 	}
 
 	li.error {
-		border-left-color: #d83f36;
+		border-left-color: #a2362e;
 	}
 
 	li.event {
@@ -90,7 +90,7 @@
 
 	time {
 		display: block;
-		color: #747b70;
+		color: #66737a;
 		font-size: 0.76rem;
 		font-weight: 800;
 	}
@@ -102,7 +102,7 @@
 
 	p {
 		margin: 4px 0 0;
-		color: #555d52;
+		color: #5f6970;
 		line-height: 1.5;
 	}
 
@@ -119,6 +119,6 @@
 
 	.empty {
 		margin: 12px 0 0;
-		color: #747b70;
+		color: #66737a;
 	}
 </style>

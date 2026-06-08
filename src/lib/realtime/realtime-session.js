@@ -1,13 +1,19 @@
 const REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
 
-const getEphemeralKey = async (onDebug) => {
+const getEphemeralKey = async (onDebug, coachStyle) => {
 	onDebug?.({
 		level: 'event',
 		step: 'token.request',
 		message: '서버에 Realtime client secret 발급을 요청합니다.'
 	});
 
-	const response = await fetch('/api/realtime-token');
+	const response = await fetch('/api/realtime-token', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({ coachStyle })
+	});
 	const data = await response.json();
 
 	if (!response.ok) {
@@ -29,8 +35,8 @@ const getEphemeralKey = async (onDebug) => {
 	return data.value;
 };
 
-export const createRealtimeVoiceSession = async ({ onDebug, onEvent, onLocalStream, onOpen }) => {
-	const ephemeralKey = await getEphemeralKey(onDebug);
+export const createRealtimeVoiceSession = async ({ coachStyle, onDebug, onEvent, onLocalStream, onOpen }) => {
+	const ephemeralKey = await getEphemeralKey(onDebug, coachStyle);
 	onDebug?.({
 		level: 'event',
 		step: 'webrtc.peer',

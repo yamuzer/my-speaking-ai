@@ -1,5 +1,7 @@
 <script>
 	import { onDestroy } from 'svelte';
+	import ApiUsagePanel from '$lib/components/ApiUsagePanel.svelte';
+	import CoachStylePanel from '$lib/components/CoachStylePanel.svelte';
 	import ConnectionSafetyStatus from '$lib/components/ConnectionSafetyStatus.svelte';
 	import ConversationLog from '$lib/components/ConversationLog.svelte';
 	import DebugPanel from '$lib/components/DebugPanel.svelte';
@@ -7,22 +9,217 @@
 	import { createWaveformAnalyzer, RESTING_WAVE_BARS } from '$lib/realtime/audio-waveform.js';
 	import { createRealtimeVoiceSession } from '$lib/realtime/realtime-session.js';
 
+	let { data } = $props();
+
 	let elapsedSeconds = $state(0);
 	let statusMessage = $state('시작 버튼을 누르고 영어로 편하게 말해보세요.');
 	let errorMessage = $state('');
 	let isConnecting = $state(false);
 	let isConnected = $state(false);
 	let waveBars = $state([...RESTING_WAVE_BARS]);
-	let conversation = $state([]);
+	let conversationSessions = $state(data.conversationSessions ?? []);
+	let activeSessionId = $state(data.conversationSessions?.[0]?.id ?? '');
+	let recordingSessionId = $state('');
 	let assistantDraft = $state('');
 	let debugEntries = $state([]);
 	let closureCheck = $state();
+	let selectedCoachStyleId = $state('friendly');
+	let customCoachStyles = $state([]);
+	let activeWorkspaceTab = $state('history');
+	let activePage = $state('conversation');
+	let isMenuOpen = $state(false);
+	let persistenceEnabled = $state(Boolean(data.persistenceEnabled));
 
 	let connectedStartedAt = 0;
 	let timer;
 	let closureCheckTimer;
 	let realtimeSession;
 	let waveformAnalyzer;
+
+	const defaultCoachStyles = [
+		{
+			id: 'friendly',
+			name: '친근한 선생님',
+			badge: '기본',
+			description: '편안한 대화를 이어가며 짧게 교정해요.',
+			instructions:
+				'따뜻하고 친근한 선생님처럼 대화해 주세요. 사용자의 말을 먼저 자연스럽게 이어받고, 답변 끝에 틀린 표현이 있으면 한국어로 한 가지를 짧게 교정해 주세요.'
+		},
+		{
+			id: 'strict',
+			name: '꼼꼼한 교정',
+			badge: '정확도',
+			description: '문법과 표현을 더 자주 짚어주는 스타일이에요.',
+			instructions:
+				'정확한 문법과 표현 교정에 집중해 주세요. 대화를 끊지 말고 먼저 짧게 답한 뒤, 문법과 어휘, 더 자연스러운 표현을 한국어로 명확히 설명해 주세요.'
+		},
+		{
+			id: 'business',
+			name: '비즈니스 회화',
+			badge: '업무',
+			description: '회의, 이메일, 발표에 맞는 표현을 연습해요.',
+			instructions:
+				'비즈니스 영어 상황에 맞춰 회의, 발표, 이메일, 협업 표현을 연습해 주세요. 전문적이고 자연스러운 업무 표현을 우선 추천해 주세요.'
+		},
+		{
+			id: 'travel',
+			name: '여행 회화',
+			badge: '실전',
+			description: '공항, 호텔, 식당 같은 상황을 자주 다뤄요.',
+			instructions:
+				'여행 영어 상황에 맞춰 공항, 호텔, 식당, 쇼핑, 길 묻기 표현을 자주 연습해 주세요. 실제 여행에서 바로 쓸 수 있는 짧은 문장을 제안해 주세요.'
+		}
+	];
+
+	let coachStyles = $derived([...defaultCoachStyles, ...customCoachStyles]);
+	let selectedCoachStyle = $derived(
+		coachStyles.find((style) => style.id === selectedCoachStyleId) ?? coachStyles[0]
+	);
+
+	const selectCoachStyle = (styleId) => {
+		selectedCoachStyleId = styleId;
+	};
+
+	const saveCustomCoachStyle = ({ name, description, instructions, favorite }) => {
+		const style = {
+			id: crypto.randomUUID(),
+			name,
+			badge: favorite ? '즐겨찾기' : '직접 설정',
+			description,
+			instructions,
+			favorite,
+			custom: true
+		};
+
+		customCoachStyles = [style, ...customCoachStyles];
+		selectedCoachStyleId = style.id;
+	};
+
+	const buildCoachStylePayload = () => ({
+		name: selectedCoachStyle.name,
+		instructions: selectedCoachStyle.instructions,
+		customInstructions: ''
+	});
+
+	const persistConversationRecord = async (session) => {
+		if (!persistenceEnabled || !session?.id) {
+			return;
+		}
+
+		try {
+			const response = await fetch('/api/conversation-records', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ session })
+			});
+
+			if (!response.ok) {
+				const data = await response.json().catch(() => ({}));
+				throw new Error(data.error ?? '대화 기록 저장에 실패했습니다.');
+			}
+		} catch (error) {
+			addDebugEntry({
+				level: 'error',
+				step: 'conversation.persist',
+				message: '대화 기록을 DB에 저장하지 못했습니다.',
+				detail: error instanceof Error ? error.message : String(error)
+			});
+		}
+	};
+
+	const formatSessionDate = (date) =>
+		new Intl.DateTimeFormat('ko-KR', {
+			year: 'numeric',
+			month: 'long',
+			day: 'numeric'
+		}).format(date);
+
+	const formatSessionTime = (date) =>
+		new Intl.DateTimeFormat('ko-KR', {
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(date);
+
+	const createConversationSession = (coachStyle) => {
+		const now = new Date();
+
+		return {
+			id: crypto.randomUUID(),
+			title: '영어회화 기록',
+			startedAt: now.toISOString(),
+			dateLabel: formatSessionDate(now),
+			timeLabel: formatSessionTime(now),
+			coachStyle: {
+				name: coachStyle.name,
+				badge: coachStyle.badge,
+				description: coachStyle.description,
+				customInstructions: coachStyle.custom ? coachStyle.instructions : ''
+			},
+			status: 'preparing',
+			durationSeconds: 0,
+			messages: []
+		};
+	};
+
+	const startConversationSession = () => {
+		const session = createConversationSession(selectedCoachStyle);
+		conversationSessions = [session, ...conversationSessions];
+		activeSessionId = session.id;
+		recordingSessionId = session.id;
+		persistConversationRecord(session);
+		return session.id;
+	};
+
+	const setConversationSessionStatus = (sessionId, status) => {
+		if (!sessionId) {
+			return;
+		}
+
+		let updatedSession;
+		conversationSessions = conversationSessions.map((session) => {
+			if (session.id !== sessionId) {
+				return session;
+			}
+
+			updatedSession = { ...session, status };
+			return updatedSession;
+		});
+
+		if (updatedSession) {
+			persistConversationRecord(updatedSession);
+		}
+	};
+
+	const setConversationSessionDuration = (sessionId, durationSeconds) => {
+		if (!sessionId) {
+			return;
+		}
+
+		let updatedSession;
+		conversationSessions = conversationSessions.map((session) => {
+			if (session.id !== sessionId) {
+				return session;
+			}
+
+			updatedSession = { ...session, durationSeconds };
+			return updatedSession;
+		});
+
+		if (updatedSession) {
+			persistConversationRecord(updatedSession);
+		}
+	};
+
+	const selectConversationSession = (sessionId) => {
+		activeSessionId = sessionId;
+	};
+
+	const openPage = (page) => {
+		activePage = page;
+		isMenuOpen = false;
+	};
 
 	const addDebugEntry = ({ level = 'event', step, message, detail }) => {
 		debugEntries = [
@@ -45,7 +242,31 @@
 			return;
 		}
 
-		conversation = [...conversation.slice(-5), { role, text: trimmed }];
+		const sessionId = recordingSessionId || activeSessionId || startConversationSession();
+		const message = {
+			id: crypto.randomUUID(),
+			role,
+			text: trimmed,
+			time: formatSessionTime(new Date())
+		};
+
+		let updatedSession;
+		conversationSessions = conversationSessions.map((session) => {
+			if (session.id !== sessionId) {
+				return session;
+			}
+
+			updatedSession = {
+				...session,
+				status: session.status === 'preparing' ? 'active' : session.status,
+				messages: [...session.messages, message]
+			};
+			return updatedSession;
+		});
+
+		if (updatedSession) {
+			persistConversationRecord(updatedSession);
+		}
 	};
 
 	const stopWaveform = () => {
@@ -135,14 +356,17 @@
 			return;
 		}
 
+		const sessionId = startConversationSession();
 		isConnecting = true;
 		statusMessage = '실시간 영어 코치와 연결하고 있어요.';
 
 		try {
 			realtimeSession = await createRealtimeVoiceSession({
+				coachStyle: buildCoachStylePayload(),
 				onDebug: addDebugEntry,
 				onEvent: handleRealtimeEvent,
 				onOpen: () => {
+					setConversationSessionStatus(sessionId, 'active');
 					statusMessage = '연결됐어요. 영어로 말하면 바로 답해드려요.';
 				},
 				onLocalStream: (stream) => {
@@ -165,6 +389,7 @@
 				message: '실시간 대화 시작 중 예외가 발생했습니다.',
 				detail: errorMessage
 			});
+			setConversationSessionStatus(sessionId, 'failed');
 			stopRealtimeSession();
 		} finally {
 			isConnecting = false;
@@ -172,10 +397,16 @@
 	};
 
 	const stopRealtimeSession = () => {
+		const finalElapsedSeconds = elapsedSeconds;
 		stopSessionTimer();
 		window.clearTimeout(closureCheckTimer);
 		const sessionToClose = realtimeSession;
 		const check = sessionToClose?.close();
+		if (sessionToClose) {
+			setConversationSessionStatus(recordingSessionId, 'ended');
+			setConversationSessionDuration(recordingSessionId, finalElapsedSeconds);
+		}
+		recordingSessionId = '';
 		realtimeSession = undefined;
 		stopWaveform();
 		isConnected = false;
@@ -214,45 +445,131 @@
 </script>
 
 <svelte:head>
-	<title>실시간 영어회화 코치</title>
+	<title>실시간 영어회화 AI</title>
 </svelte:head>
 
 <main class="recorder-page">
 	<section class="recorder-panel" aria-labelledby="page-title">
-		<div class="intro">
-			<div class="title-row">
-				<p class="eyebrow">Real-time English Coach</p>
-				<span class:online={isConnected} class:pending={isConnecting} class="session-chip">
-					{isConnecting ? '연결 중' : isConnected ? '대화 중' : '준비됨'}
-				</span>
+		<div class="account-bar">
+			<button class="brand-button" type="button" onclick={() => openPage('conversation')}>
+				My Speaking AI
+			</button>
+
+			<div class="menu-area">
+				<button
+					class="menu-button"
+					type="button"
+					aria-label="메뉴 열기"
+					aria-expanded={isMenuOpen}
+					onclick={() => (isMenuOpen = !isMenuOpen)}
+				>
+					<span></span>
+					<span></span>
+					<span></span>
+				</button>
+
+				{#if isMenuOpen}
+					<nav class="menu-popover" aria-label="사용자 메뉴">
+						<p>안녕하세요, {data.user.email}님</p>
+						<button type="button" onclick={() => openPage('usage')}>사용량 통계</button>
+						<form method="POST" action="/auth/logout">
+							<button type="submit">로그아웃</button>
+						</form>
+					</nav>
+				{/if}
 			</div>
-			<h1 id="page-title">실시간 영어회화 코치</h1>
-			<p>버튼을 누르고 영어로 말해보세요. 코치가 자연스럽게 대화를 이어가며 짧게 피드백해드려요.</p>
 		</div>
 
-		<VoiceVisualizer
-			{isConnected}
-			{isConnecting}
-			{elapsedSeconds}
-			{waveBars}
-		/>
+		{#if activePage === 'usage'}
+			<ApiUsagePanel
+				sessions={conversationSessions}
+				currentElapsedSeconds={isConnected || isConnecting ? elapsedSeconds : 0}
+			/>
+		{:else}
+			<div class="intro">
+				<div class="title-row">
+					<p class="eyebrow">Real-time English Coach</p>
+					<span class:online={isConnected} class:pending={isConnecting} class="session-chip">
+						{isConnecting ? '연결 중' : isConnected ? '대화 중' : '준비됨'}
+					</span>
+				</div>
+				<h1 id="page-title">실시간 영어회화 AI</h1>
+				<p>AI와 바로 말하며 영어 대화를 연습하세요.</p>
+			</div>
 
-		<div class="controls">
-			{#if isConnected || isConnecting}
-				<button class="stop" type="button" onclick={stopRealtimeSession}>대화 종료</button>
-			{:else}
-				<button class="primary" type="button" onclick={startRealtimeSession}>실시간 대화 시작</button>
+			<VoiceVisualizer
+				{isConnected}
+				{isConnecting}
+				{elapsedSeconds}
+				{waveBars}
+			/>
+
+			<div class="controls">
+				{#if isConnected || isConnecting}
+					<button class="stop" type="button" onclick={stopRealtimeSession}>대화 종료</button>
+				{:else}
+					<button class="primary" type="button" onclick={startRealtimeSession}>실시간 대화 시작</button>
+				{/if}
+			</div>
+
+			<p class="status" aria-live="polite">{statusMessage}</p>
+			{#if errorMessage}
+				<p class="error" role="alert">{errorMessage}</p>
 			{/if}
-		</div>
 
-		<p class="status" aria-live="polite">{statusMessage}</p>
-		{#if errorMessage}
-			<p class="error" role="alert">{errorMessage}</p>
+			<ConnectionSafetyStatus check={closureCheck} />
+
+			<section class="workspace-tabs" aria-label="대화 관리">
+				<div class="tab-list" role="tablist" aria-label="대화 관리 탭">
+					<button
+						class:active={activeWorkspaceTab === 'history'}
+						type="button"
+						role="tab"
+						aria-selected={activeWorkspaceTab === 'history'}
+						aria-controls="history-panel"
+						id="history-tab"
+						onclick={() => (activeWorkspaceTab = 'history')}
+					>
+						대화 기록
+					</button>
+					<button
+						class:active={activeWorkspaceTab === 'style'}
+						type="button"
+						role="tab"
+						aria-selected={activeWorkspaceTab === 'style'}
+						aria-controls="style-panel"
+						id="style-tab"
+						onclick={() => (activeWorkspaceTab = 'style')}
+					>
+						AI 코치 스타일
+					</button>
+				</div>
+
+				{#if activeWorkspaceTab === 'history'}
+					<div id="history-panel" role="tabpanel" aria-labelledby="history-tab">
+						<ConversationLog
+							sessions={conversationSessions}
+							{activeSessionId}
+							{recordingSessionId}
+							{assistantDraft}
+							onSelect={selectConversationSession}
+						/>
+					</div>
+				{:else}
+					<div id="style-panel" role="tabpanel" aria-labelledby="style-tab">
+						<CoachStylePanel
+							styles={coachStyles}
+							selectedStyleId={selectedCoachStyleId}
+							disabled={isConnected || isConnecting}
+							onSelect={selectCoachStyle}
+							onSave={saveCustomCoachStyle}
+						/>
+					</div>
+				{/if}
+			</section>
+
+			<DebugPanel entries={debugEntries} onClear={() => (debugEntries = [])} />
 		{/if}
-
-		<ConnectionSafetyStatus check={closureCheck} />
-		<ConversationLog {conversation} {assistantDraft} />
-		<DebugPanel entries={debugEntries} onClear={() => (debugEntries = [])} />
 	</section>
 </main>
 
@@ -262,8 +579,8 @@
 		font-family:
 			'Pretendard Variable', Pretendard, 'Noto Sans KR', Inter, ui-sans-serif, system-ui,
 			-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		background: #f6f3ed;
-		color: #201f1b;
+		background: #eef6f3;
+		color: #1f2428;
 		letter-spacing: 0;
 		text-rendering: geometricprecision;
 	}
@@ -276,27 +593,124 @@
 			background 160ms ease;
 	}
 
+	form {
+		margin: 0;
+	}
+
 	.recorder-page {
 		min-height: 100vh;
 		display: grid;
 		place-items: center;
 		padding: 40px 18px;
 		background:
-			radial-gradient(circle at 16% 12%, rgba(207, 68, 57, 0.14), transparent 24rem),
-			radial-gradient(circle at 84% 10%, rgba(42, 117, 85, 0.12), transparent 23rem),
-			linear-gradient(135deg, #f6f3ed 0%, #edf3ed 50%, #fff8f1 100%);
+			linear-gradient(145deg, rgba(255, 255, 255, 0.72) 0 38%, transparent 38%),
+			linear-gradient(135deg, #eef6f3 0%, #f8fbff 47%, #fff4ec 100%);
 	}
 
 	.recorder-panel {
 		width: min(100%, 760px);
 		padding: clamp(24px, 5vw, 44px);
-		border: 1px solid rgba(34, 31, 28, 0.1);
+		border: 1px solid rgba(35, 65, 70, 0.1);
 		border-radius: 8px;
-		background: rgba(255, 255, 255, 0.92);
+		background: rgba(255, 255, 255, 0.9);
 		box-shadow:
-			0 30px 90px rgba(38, 34, 30, 0.14),
+			0 30px 90px rgba(33, 50, 56, 0.14),
 			inset 0 1px 0 rgba(255, 255, 255, 0.72);
 		backdrop-filter: blur(18px);
+	}
+
+	.account-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		margin-bottom: 18px;
+		color: #5f6970;
+		font-size: 0.9rem;
+		font-weight: 800;
+	}
+
+	.brand-button,
+	.menu-button,
+	.menu-popover button {
+		min-height: 0;
+		box-shadow: none;
+	}
+
+	.brand-button {
+		justify-items: start;
+		padding: 0;
+		background: transparent;
+		color: #1f2428;
+		font-size: 1rem;
+		font-weight: 950;
+	}
+
+	.menu-area {
+		position: relative;
+	}
+
+	.menu-button {
+		width: 36px;
+		aspect-ratio: 1;
+		display: grid;
+		place-content: center;
+		gap: 4px;
+		border: 0;
+		border-radius: 8px;
+		background: transparent;
+	}
+
+	.menu-button span {
+		width: 18px;
+		height: 2px;
+		border-radius: 999px;
+		background: #4d5a60;
+	}
+
+	.menu-button:hover {
+		background: #edf5f3;
+		transform: none;
+	}
+
+	.menu-popover {
+		position: absolute;
+		top: calc(100% + 8px);
+		right: 0;
+		z-index: 10;
+		width: min(78vw, 260px);
+		overflow: hidden;
+		border: 1px solid rgba(35, 65, 70, 0.12);
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.96);
+		box-shadow: 0 18px 42px rgba(33, 50, 56, 0.16);
+	}
+
+	.menu-popover p {
+		margin: 0;
+		padding: 14px 16px;
+		border-bottom: 1px solid rgba(35, 65, 70, 0.08);
+		color: #4d5a60;
+		font-size: 0.82rem;
+		line-height: 1.45;
+		overflow-wrap: anywhere;
+	}
+
+	.menu-popover button {
+		width: 100%;
+		justify-content: start;
+		padding: 13px 16px;
+		border-radius: 0;
+		background: transparent;
+		color: #1f2428;
+		font-size: 0.9rem;
+		text-align: left;
+	}
+
+	.menu-popover button:hover {
+		background: #edf5f3;
+		color: #187064;
+		transform: none;
 	}
 
 	.intro {
@@ -317,7 +731,7 @@
 
 	.eyebrow {
 		margin: 0;
-		color: #a63a32;
+		color: #187064;
 		font-size: 0.74rem;
 		font-weight: 900;
 		text-transform: uppercase;
@@ -330,36 +744,39 @@
 		min-height: 30px;
 		padding: 0 11px;
 		border-radius: 999px;
-		background: #f2eee7;
-		color: #625b52;
+		background: #edf5f3;
+		color: #66737a;
 		font-size: 0.76rem;
 		font-weight: 900;
 		line-height: 1;
 	}
 
 	.session-chip.online {
-		background: #eaf5ee;
-		color: #24724d;
+		background: #e6f6f1;
+		color: #187064;
 	}
 
 	.session-chip.pending {
-		background: #fff2d8;
-		color: #8b5d12;
+		background: #fff4e6;
+		color: #9a6615;
 	}
 
 	h1 {
 		margin: 0;
 		font-size: clamp(2.15rem, 7vw, 3.55rem);
 		line-height: 1.02;
-		font-weight: 860;
+		font-weight: 900;
+		overflow-wrap: anywhere;
 	}
 
 	.intro p:last-child {
 		margin: 0;
 		max-width: 620px;
-		color: #68645c;
+		color: #5f6970;
 		font-size: 1.02rem;
-		line-height: 1.72;
+		line-height: 1.6;
+		text-wrap: balance;
+		word-break: keep-all;
 	}
 
 	.controls {
@@ -379,25 +796,25 @@
 	}
 
 	.primary {
-		background: #cf4439;
+		background: #1f8b7c;
 		color: white;
-		box-shadow: 0 14px 34px rgba(207, 68, 57, 0.24);
+		box-shadow: 0 14px 34px rgba(31, 139, 124, 0.24);
 	}
 
 	.primary:hover {
-		background: #b93830;
+		background: #176f65;
 		transform: translateY(-1px);
-		box-shadow: 0 18px 38px rgba(207, 68, 57, 0.28);
+		box-shadow: 0 18px 38px rgba(31, 139, 124, 0.28);
 	}
 
 	.stop {
-		background: #a9352f;
+		background: #a2362e;
 		color: white;
-		box-shadow: 0 14px 32px rgba(169, 53, 47, 0.22);
+		box-shadow: 0 14px 32px rgba(162, 54, 46, 0.22);
 	}
 
 	.stop:hover {
-		background: #8f2c28;
+		background: #862c27;
 		transform: translateY(-1px);
 	}
 
@@ -411,16 +828,49 @@
 	}
 
 	.status {
-		color: #4d574e;
-		background: #f3f7f1;
-		box-shadow: inset 0 0 0 1px rgba(42, 117, 85, 0.08);
+		color: #47605e;
+		background: #eef8f5;
+		box-shadow: inset 0 0 0 1px rgba(31, 139, 124, 0.1);
 	}
 
 	.error {
-		color: #9c3029;
+		color: #a2362e;
 		background: #fff0ee;
 		font-weight: 700;
-		box-shadow: inset 0 0 0 1px rgba(207, 68, 57, 0.1);
+		box-shadow: inset 0 0 0 1px rgba(162, 54, 46, 0.1);
+	}
+
+	.workspace-tabs {
+		margin-top: 24px;
+		display: grid;
+		gap: 16px;
+	}
+
+	.tab-list {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 6px;
+		padding: 6px;
+		border-radius: 8px;
+		background: rgba(237, 245, 243, 0.7);
+		box-shadow: inset 0 0 0 1px rgba(35, 65, 70, 0.08);
+	}
+
+	.tab-list button {
+		min-height: 42px;
+		border-radius: 8px;
+		background: transparent;
+		color: #66737a;
+		box-shadow: none;
+		font-size: 0.92rem;
+	}
+
+	.tab-list button:hover,
+	.tab-list button.active {
+		background: white;
+		color: #187064;
+		box-shadow: 0 8px 22px rgba(33, 50, 56, 0.08);
+		transform: none;
 	}
 
 	@media (max-width: 560px) {
