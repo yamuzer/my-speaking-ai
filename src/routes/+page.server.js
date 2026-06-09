@@ -2,14 +2,16 @@ import { fail, redirect } from '@sveltejs/kit';
 import { requireLogin } from '$lib/server/auth.js';
 import { loadConversationRecords } from '$lib/server/conversation-records.js';
 import { loadPromptStyles } from '$lib/server/prompt-styles.js';
+import { loadTokenQuota } from '$lib/server/token-quota.js';
 import { loadUserProfile, saveUserOnboarding } from '$lib/server/user-profile.js';
 
 export async function load({ locals }) {
 	requireLogin(locals);
-	const [profileStatus, records, promptStyles] = await Promise.all([
+	const [profileStatus, records, promptStyles, tokenQuota] = await Promise.all([
 		loadUserProfile(locals.user),
 		loadConversationRecords(locals.user),
-		loadPromptStyles(locals.user)
+		loadPromptStyles(locals.user),
+		loadTokenQuota(locals.user)
 	]);
 
 	if (!profileStatus.onboardingCompleted) {
@@ -19,6 +21,7 @@ export async function load({ locals }) {
 	return {
 		user: locals.user,
 		profile: profileStatus.profile,
+		tokenQuota,
 		...records,
 		...promptStyles
 	};

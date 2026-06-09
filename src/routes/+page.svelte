@@ -1,4 +1,5 @@
 <script>
+	import { invalidateAll } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import ApiUsagePanel from '$lib/components/ApiUsagePanel.svelte';
 	import CoachStylePanel from '$lib/components/CoachStylePanel.svelte';
@@ -33,6 +34,8 @@
 	let activeWorkspaceTab = $state('history');
 	let activePage = $state(untrack(() => (form?.formName === 'profile' ? 'profile' : 'conversation')));
 	let isMenuOpen = $state(false);
+	let isUsageRefreshing = $state(false);
+	let tokenQuota = $derived(data.tokenQuota);
 	let persistenceEnabled = $state(untrack(() => Boolean(data.persistenceEnabled)));
 	let promptStylePersistenceEnabled = $state(
 		untrack(() => Boolean(data.promptStylePersistenceEnabled))
@@ -48,10 +51,18 @@
 	const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 	const ESTIMATED_CHARS_PER_TOKEN = 4;
 
+	const formatNumber = (value) => new Intl.NumberFormat('ko-KR').format(Math.round(value || 0));
 	let coachStyles = $derived([...defaultCoachStyles, ...customCoachStyles]);
 	let selectedCoachStyle = $derived(
 		coachStyles.find((style) => style.id === selectedCoachStyleId) ?? coachStyles[0]
 	);
+	let quotaUsedPercent = $derived.by(() => {
+		const quota = Number(tokenQuota?.tokenQuota ?? 0);
+		const used = Number(tokenQuota?.usedTokens ?? 0);
+
+		return quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+	});
+	let quotaBarStyle = $derived(`width: ${quotaUsedPercent}%`);
 
 	const selectCoachStyle = (styleId) => {
 		selectedCoachStyleId = styleId;
@@ -105,7 +116,16 @@
 		}
 
 		try {
-			await saveConversationRecord(session);
+			const result = await saveConversationRecord(session);
+
+			if (result?.quota) {
+				tokenQuota = result.quota;
+
+				if (result.quota.quotaEnabled && result.quota.remainingTokens <= 0 && realtimeSession) {
+					errorMessage = '토큰 할당량을 모두 사용해 대화를 자동으로 종료했습니다.';
+					stopRealtimeSession();
+				}
+			}
 		} catch (error) {
 			addDebugEntry({
 				level: 'error',
@@ -203,9 +223,23 @@
 		activeSessionId = sessionId;
 	};
 
+	const refreshServerData = async () => {
+		isUsageRefreshing = true;
+
+		try {
+			await invalidateAll();
+		} finally {
+			isUsageRefreshing = false;
+		}
+	};
+
 	const openPage = (page) => {
 		activePage = page;
 		isMenuOpen = false;
+
+		if (page === 'usage') {
+			refreshServerData();
+		}
 	};
 
 	const addDebugEntry = ({ level = 'event', step, message, detail }) => {
@@ -568,9 +602,12 @@
 		{#if activePage === 'usage'}
 			<ApiUsagePanel
 				sessions={conversationSessions}
+				{tokenQuota}
 				currentElapsedSeconds={isConnected || isConnecting ? elapsedSeconds : 0}
 				currentSessionId={recordingSessionId}
+				{isUsageRefreshing}
 				{persistenceEnabled}
+				onRefresh={refreshServerData}
 				onOpenConversation={() => {
 					activePage = 'conversation';
 					activeWorkspaceTab = 'history';
@@ -589,6 +626,22 @@
 				<h1 id="page-title">실시간 영어회화 AI</h1>
 				<p>AI와 바로 말하며 영어 대화를 연습하세요.</p>
 			</div>
+
+			{#if tokenQuota}
+				<section class:quota-disabled={!tokenQuota.quotaEnabled} class="quota-summary" aria-label="남은 토큰">
+					<div>
+						<span>{tokenQuota.quotaEnabled ? '남은 토큰' : '토큰 제한 미적용'}</span>
+						<strong>{formatNumber(tokenQuota.remainingTokens)} tokens</strong>
+					</div>
+					<div class="quota-mini-track" role="meter" aria-label="토큰 사용률" aria-valuemin="0" aria-valuemax="100" aria-valuenow={quotaUsedPercent}>
+						<i class:quota-warning={quotaUsedPercent >= 80} class:quota-danger={quotaUsedPercent >= 100} style={quotaBarStyle}></i>
+					</div>
+					<p>
+						{formatNumber(tokenQuota.usedTokens)} / {formatNumber(tokenQuota.tokenQuota)} tokens ·
+						{quotaUsedPercent}% 사용
+					</p>
+				</section>
+			{/if}
 
 			<VoiceVisualizer
 				{isConnected}
@@ -871,6 +924,70 @@
 		line-height: 1.6;
 		text-wrap: balance;
 		word-break: keep-all;
+	}
+
+	.quota-summary {
+		display: grid;
+		gap: 10px;
+		margin-top: 18px;
+		padding: 14px 16px;
+		border: 1px solid rgba(35, 65, 70, 0.12);
+		border-radius: 8px;
+		background: #f5f9fb;
+	}
+
+	.quota-summary.quota-disabled {
+		background: #fbfcfd;
+	}
+
+	.quota-summary div:first-child {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.quota-summary span {
+		color: #5f6970;
+		font-size: 0.84rem;
+		font-weight: 900;
+	}
+
+	.quota-summary strong {
+		color: #187064;
+		font-size: 1.08rem;
+		font-weight: 950;
+		text-align: right;
+	}
+
+	.quota-summary p {
+		margin: 0;
+		color: #66737a;
+		font-size: 0.82rem;
+		font-weight: 800;
+		line-height: 1.45;
+	}
+
+	.quota-mini-track {
+		height: 10px;
+		overflow: hidden;
+		border-radius: 999px;
+		background: #dfe8eb;
+	}
+
+	.quota-mini-track i {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: #1f8b7c;
+	}
+
+	.quota-mini-track i.quota-warning {
+		background: #c47f17;
+	}
+
+	.quota-mini-track i.quota-danger {
+		background: #a2362e;
 	}
 
 	.controls {

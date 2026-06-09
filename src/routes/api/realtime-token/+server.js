@@ -1,9 +1,23 @@
 import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
 import { createHash } from 'node:crypto';
+import { ensureTokenQuotaAvailable } from '$lib/server/token-quota.js';
 import { loadUserProfile } from '$lib/server/user-profile.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
+
+const cleanEnvValue = (value) =>
+	String(value ?? '')
+		.replace(/\uFEFF/g, '')
+		.trim();
+
+const sanitizeHeaderValue = (value) =>
+	String(value ?? '')
+		.replace(/\uFEFF/g, '')
+		.replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+		.replace(/[^\x00-\x7F]/g, '')
+		.trim();
+
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 const tokenRequestBuckets = new Map();
@@ -153,13 +167,28 @@ async function createRealtimeToken({ locals, coachStyle }) {
 		return json({ error: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }, { status: 429 });
 	}
 
-	if (!env.OPENAI_API_KEY) {
+	const openaiApiKey = sanitizeHeaderValue(cleanEnvValue(env.OPENAI_API_KEY));
+
+	if (!openaiApiKey) {
 		return json(
 			{
 				error: 'OPENAI_API_KEY is not set on the server.',
 				step: 'env.OPENAI_API_KEY'
 			},
 			{ status: 500 }
+		);
+	}
+
+	let tokenQuota;
+	try {
+		tokenQuota = await ensureTokenQuotaAvailable(locals.user);
+	} catch (error) {
+		return json(
+			{
+				error: error?.message ?? '토큰 할당량을 확인하지 못했습니다.',
+				quota: error?.quota
+			},
+			{ status: error?.status ?? 500 }
 		);
 	}
 
@@ -172,7 +201,7 @@ async function createRealtimeToken({ locals, coachStyle }) {
 	const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
 		method: 'POST',
 		headers: {
-			Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+			Authorization: `Bearer ${openaiApiKey}`,
 			'Content-Type': 'application/json',
 			'OpenAI-Safety-Identifier': `speaking-practice-${hashUserId(locals.user.id)}`
 		},
@@ -211,7 +240,10 @@ async function createRealtimeToken({ locals, coachStyle }) {
 		);
 	}
 
-	return json(data);
+	return json({
+		...data,
+		quota: tokenQuota
+	});
 }
 
 export const POST = async ({ locals, request }) => {
@@ -220,7 +252,31 @@ export const POST = async ({ locals, request }) => {
 	}
 
 	const body = await request.json().catch(() => ({}));
-	return createRealtimeToken({ locals, coachStyle: body.coachStyle });
+	try {
+		return await createRealtimeToken({ locals, coachStyle: body.coachStyle });
+	} catch (error) {
+		console.error('realtime-token error', error);
+		return json(
+			{
+				error: error?.message ?? '서버에서 알 수 없는 오류가 발생했습니다.',
+				step: 'server.internal'
+			},
+			{ status: 500 }
+		);
+	}
 };
 
-export const GET = async ({ locals }) => createRealtimeToken({ locals });
+export const GET = async ({ locals }) => {
+	try {
+		return await createRealtimeToken({ locals });
+	} catch (error) {
+		console.error('realtime-token error', error);
+		return json(
+			{
+				error: error?.message ?? '서버에서 알 수 없는 오류가 발생했습니다.',
+				step: 'server.internal'
+			},
+			{ status: 500 }
+		);
+	}
+};

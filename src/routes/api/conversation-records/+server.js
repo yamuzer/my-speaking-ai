@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { saveConversationRecord } from '$lib/server/conversation-records.js';
+import { loadTokenQuota } from '$lib/server/token-quota.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -25,6 +26,9 @@ export const POST = async ({ locals, request }) => {
 
 	try {
 		await saveConversationRecord(locals.user, body.session);
+		const quota = await loadTokenQuota(locals.user);
+
+		return json({ ok: true, quota });
 	} catch (error) {
 		console.error('Conversation record save failed', {
 			userId: locals.user.id,
@@ -39,6 +43,4 @@ export const POST = async ({ locals, request }) => {
 			{ status: 500 }
 		);
 	}
-
-	return json({ ok: true });
 };

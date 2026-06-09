@@ -1,5 +1,12 @@
 const REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
 
+const sanitizeHeaderValue = (value) =>
+	String(value ?? '')
+		.replace(/\uFEFF/g, '')
+		.replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+		.replace(/[^\x00-\x7F]/g, '')
+		.trim();
+
 const getEphemeralKey = async (onDebug, coachStyle) => {
 	onDebug?.({
 		level: 'event',
@@ -36,7 +43,7 @@ const getEphemeralKey = async (onDebug, coachStyle) => {
 };
 
 export const createRealtimeVoiceSession = async ({ coachStyle, onDebug, onEvent, onLocalStream, onOpen }) => {
-	const ephemeralKey = await getEphemeralKey(onDebug, coachStyle);
+	const ephemeralKey = sanitizeHeaderValue(await getEphemeralKey(onDebug, coachStyle));
 	onDebug?.({
 		level: 'event',
 		step: 'webrtc.peer',

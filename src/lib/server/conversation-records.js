@@ -1,4 +1,5 @@
 import { hasDatabaseConnection, withDb } from '$lib/server/db.js';
+import { calculateSessionTokenUsage, recordTokenUsageDelta } from '$lib/server/token-quota.js';
 
 const MAX_MESSAGES = 200;
 const MAX_MESSAGE_CHARS = 2000;
@@ -26,6 +27,10 @@ const formatSessionTime = (date) =>
 		minute: '2-digit',
 		timeZone: 'Asia/Seoul'
 	}).format(date);
+
+function isMissingTokenSchema(error) {
+	return ['42P01', '42703'].includes(error?.code);
+}
 
 function normalizeMessages(messages, sessionId = 'session') {
 	return Array.isArray(messages)
@@ -83,6 +88,9 @@ function mapRecord(row) {
 		coachStyle: row.coach_style ?? {},
 		status: row.status,
 		durationSeconds: Number(row.duration_seconds ?? 0),
+		inputTokens: Number(row.input_tokens ?? 0),
+		outputTokens: Number(row.output_tokens ?? 0),
+		totalTokens: Number(row.total_tokens ?? 0),
 		messages: normalizeMessages(row.messages, row.id)
 	};
 }
@@ -96,14 +104,32 @@ export async function loadConversationRecords(user) {
 	}
 
 	return withDb(async (client) => {
-		const result = await client.query(
-			`SELECT id, title, coach_style, messages, status, duration_seconds, started_at
-			 FROM public.conversation_records
-			 WHERE user_id = $1
-			 ORDER BY started_at DESC
-			 LIMIT 100`,
-			[user.id]
-		);
+		let result;
+
+		try {
+			result = await client.query(
+				`SELECT id, title, coach_style, messages, status, duration_seconds,
+					input_tokens, output_tokens, total_tokens, started_at
+				 FROM public.conversation_records
+				 WHERE user_id = $1
+				 ORDER BY started_at DESC
+				 LIMIT 100`,
+				[user.id]
+			);
+		} catch (error) {
+			if (!isMissingTokenSchema(error)) {
+				throw error;
+			}
+
+			result = await client.query(
+				`SELECT id, title, coach_style, messages, status, duration_seconds, started_at
+				 FROM public.conversation_records
+				 WHERE user_id = $1
+				 ORDER BY started_at DESC
+				 LIMIT 100`,
+				[user.id]
+			);
+		}
 
 		return {
 			conversationSessions: result.rows.map(mapRecord),
@@ -118,27 +144,89 @@ export async function saveConversationRecord(user, session) {
 	}
 
 	await withDb(async (client) => {
-		await client.query(
-			`INSERT INTO public.conversation_records
-			 (id, user_id, title, coach_style, messages, status, duration_seconds, started_at, updated_at)
-			 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, now())
-			 ON CONFLICT (id) DO UPDATE SET
-				title = EXCLUDED.title,
-				coach_style = EXCLUDED.coach_style,
-				messages = EXCLUDED.messages,
-				status = EXCLUDED.status,
-				duration_seconds = EXCLUDED.duration_seconds,
-				updated_at = now()`,
-			[
-				session.id,
-				user.id,
-				normalizeText(session.title ?? '영어회화 기록', MAX_TITLE_CHARS) || '영어회화 기록',
-				JSON.stringify(session.coachStyle ?? {}),
-				JSON.stringify(normalizeMessages(session.messages, session.id)),
-				session.status ?? 'ended',
-				normalizeDurationSeconds(session.durationSeconds),
-				normalizeStartedAt(session.startedAt)
-			]
-		);
+		await client.query('BEGIN');
+
+		try {
+			const messages = normalizeMessages(session.messages, session.id);
+			const usage = calculateSessionTokenUsage(messages);
+			const startedAt = normalizeStartedAt(session.startedAt);
+			const previous = await client.query(
+				`SELECT input_tokens, output_tokens, total_tokens
+				 FROM public.conversation_records
+				 WHERE id = $1 AND user_id = $2
+				 FOR UPDATE`,
+				[session.id, user.id]
+			);
+			const previousUsage = previous.rows[0] ?? {};
+			const usageDelta = {
+				inputTokens: usage.inputTokens - Number(previousUsage.input_tokens ?? 0),
+				outputTokens: usage.outputTokens - Number(previousUsage.output_tokens ?? 0),
+				totalTokens: usage.totalTokens - Number(previousUsage.total_tokens ?? 0)
+			};
+
+			await client.query(
+				`INSERT INTO public.conversation_records
+				 (id, user_id, title, coach_style, messages, status, duration_seconds,
+					input_tokens, output_tokens, total_tokens, started_at, updated_at)
+				 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11, now())
+				 ON CONFLICT (id) DO UPDATE SET
+					title = EXCLUDED.title,
+					coach_style = EXCLUDED.coach_style,
+					messages = EXCLUDED.messages,
+					status = EXCLUDED.status,
+					duration_seconds = EXCLUDED.duration_seconds,
+					input_tokens = EXCLUDED.input_tokens,
+					output_tokens = EXCLUDED.output_tokens,
+					total_tokens = EXCLUDED.total_tokens,
+					updated_at = now()`,
+				[
+					session.id,
+					user.id,
+					normalizeText(session.title ?? '영어회화 기록', MAX_TITLE_CHARS) || '영어회화 기록',
+					JSON.stringify(session.coachStyle ?? {}),
+					JSON.stringify(messages),
+					session.status ?? 'ended',
+					normalizeDurationSeconds(session.durationSeconds),
+					usage.inputTokens,
+					usage.outputTokens,
+					usage.totalTokens,
+					startedAt
+				]
+			);
+
+			await recordTokenUsageDelta(client, user.id, usageDelta);
+			await client.query('COMMIT');
+		} catch (error) {
+			await client.query('ROLLBACK').catch(() => {});
+
+			if (!isMissingTokenSchema(error)) {
+				throw error;
+			}
+
+			const messages = normalizeMessages(session.messages, session.id);
+
+			await client.query(
+				`INSERT INTO public.conversation_records
+				 (id, user_id, title, coach_style, messages, status, duration_seconds, started_at, updated_at)
+				 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, now())
+				 ON CONFLICT (id) DO UPDATE SET
+					title = EXCLUDED.title,
+					coach_style = EXCLUDED.coach_style,
+					messages = EXCLUDED.messages,
+					status = EXCLUDED.status,
+					duration_seconds = EXCLUDED.duration_seconds,
+					updated_at = now()`,
+				[
+					session.id,
+					user.id,
+					normalizeText(session.title ?? '영어회화 기록', MAX_TITLE_CHARS) || '영어회화 기록',
+					JSON.stringify(session.coachStyle ?? {}),
+					JSON.stringify(messages),
+					session.status ?? 'ended',
+					normalizeDurationSeconds(session.durationSeconds),
+					normalizeStartedAt(session.startedAt)
+				]
+			);
+		}
 	});
 }

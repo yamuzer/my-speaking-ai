@@ -1,9 +1,12 @@
 <script>
 	let {
 		sessions = [],
+		tokenQuota = null,
 		currentElapsedSeconds = 0,
 		currentSessionId = '',
+		isUsageRefreshing = false,
 		persistenceEnabled = true,
+		onRefresh,
 		onOpenConversation
 	} = $props();
 
@@ -95,6 +98,13 @@
 	let inputCost = $derived((totalInputTokens / 1_000_000) * AUDIO_INPUT_PRICE);
 	let outputCost = $derived((totalOutputTokens / 1_000_000) * AUDIO_OUTPUT_PRICE);
 	let totalCost = $derived(inputCost + outputCost);
+	let quotaUsedPercent = $derived.by(() => {
+		const quota = Number(tokenQuota?.tokenQuota ?? 0);
+		const used = Number(tokenQuota?.usedTokens ?? 0);
+
+		return quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+	});
+	let quotaBarStyle = $derived(`width: ${quotaUsedPercent}%`);
 
 	const openSession = (session) => {
 		selectedSessionId = session.id;
@@ -105,6 +115,10 @@
 			event.preventDefault();
 			openSession(session);
 		}
+	};
+	const refreshUsage = async () => {
+		await onRefresh?.();
+		updatedAt = new Date();
 	};
 </script>
 
@@ -123,6 +137,37 @@
 			<strong>데이터베이스 연결이 필요합니다.</strong>
 			<span>현재 브라우저에 남아 있는 대화만 임시로 집계하고 있어요.</span>
 		</div>
+	{/if}
+
+	{#if tokenQuota}
+		<section class:quota-disabled={!tokenQuota.quotaEnabled} class="quota-card" aria-label="토큰 할당량">
+			<div class="quota-heading">
+				<div>
+					<strong>내 토큰 할당량</strong>
+					<span>{tokenQuota.quotaEnabled ? '할당량 제한 적용 중' : '할당량 제한 미적용'}</span>
+				</div>
+				<b>{quotaUsedPercent}%</b>
+			</div>
+
+			<div class="quota-track" role="meter" aria-label="토큰 사용률" aria-valuemin="0" aria-valuemax="100" aria-valuenow={quotaUsedPercent}>
+				<i class:quota-warning={quotaUsedPercent >= 80} class:quota-danger={quotaUsedPercent >= 100} style={quotaBarStyle}></i>
+			</div>
+
+			<dl class="quota-stats">
+				<div>
+					<dt>사용</dt>
+					<dd>{formatNumber(tokenQuota.usedTokens)} tokens</dd>
+				</div>
+				<div>
+					<dt>할당</dt>
+					<dd>{formatNumber(tokenQuota.tokenQuota)} tokens</dd>
+				</div>
+				<div>
+					<dt>남음</dt>
+					<dd>{formatNumber(tokenQuota.remainingTokens)} tokens</dd>
+				</div>
+			</dl>
+		</section>
 	{/if}
 
 	<section class="control-panel" aria-label="사용량 필터">
@@ -146,10 +191,16 @@
 			</select>
 		</label>
 
-		<button type="button" onclick={() => (updatedAt = new Date())}>새로고침</button>
+		<button type="button" disabled={isUsageRefreshing} onclick={refreshUsage}>
+			{isUsageRefreshing ? '갱신 중' : '새로고침'}
+		</button>
 	</section>
 
 	<section class="metric-grid primary-metrics" aria-label="핵심 사용량">
+		<article>
+			<strong>{quotaUsedPercent}%</strong>
+			<span>할당량 사용률</span>
+		</article>
 		<article>
 			<strong>{formatUsd(totalCost)}</strong>
 			<span>예상 비용</span>
@@ -158,13 +209,13 @@
 			<strong>{formatMinutes(totalSeconds)}</strong>
 			<span>음성 대화</span>
 		</article>
+	</section>
+
+	<section class="metric-grid secondary-metrics" aria-label="추가 사용량">
 		<article>
 			<strong>{formatNumber(totalMessages)}개</strong>
 			<span>메시지</span>
 		</article>
-	</section>
-
-	<section class="metric-grid secondary-metrics" aria-label="추가 사용량">
 		<article>
 			<strong>{formatNumber(periodSessions.length)}개</strong>
 			<span>총 대화 세션</span>
@@ -389,6 +440,7 @@
 	}
 
 	.notice,
+	.quota-card,
 	.control-panel,
 	.cost-card,
 	.details-card,
@@ -409,6 +461,91 @@
 
 	.notice span {
 		color: #7c6a45;
+	}
+
+	.quota-card {
+		display: grid;
+		gap: 14px;
+		padding: 16px;
+		background: #f5f9fb;
+	}
+
+	.quota-card.quota-disabled {
+		background: #fbfcfd;
+	}
+
+	.quota-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.quota-card strong {
+		display: block;
+		color: #1f2428;
+		font-weight: 950;
+	}
+
+	.quota-card span {
+		margin: 0;
+		color: #5f6970;
+		font-size: 0.88rem;
+		font-weight: 800;
+	}
+
+	.quota-heading b {
+		color: #187064;
+		font-size: 1.6rem;
+		font-weight: 950;
+		line-height: 1;
+	}
+
+	.quota-track {
+		height: 12px;
+		width: 100%;
+		overflow: hidden;
+		border-radius: 999px;
+		background: #dfe8eb;
+	}
+
+	.quota-track i {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: #1f8b7c;
+	}
+
+	.quota-track i.quota-warning {
+		background: #c47f17;
+	}
+
+	.quota-track i.quota-danger {
+		background: #a2362e;
+	}
+
+	.quota-stats {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.quota-stats div {
+		display: grid;
+		gap: 5px;
+		padding: 10px 12px;
+		border: 0;
+		border-radius: 8px;
+		background: #ffffff;
+	}
+
+	.quota-stats dt,
+	.quota-stats dd {
+		text-align: left;
+	}
+
+	.quota-stats dd {
+		color: #187064;
+		font-size: 0.95rem;
 	}
 
 	.control-panel {
@@ -468,7 +605,7 @@
 	}
 
 	.secondary-metrics {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
 	.metric-grid article {
