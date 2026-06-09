@@ -22,7 +22,7 @@ const SUPABASE_PUBLIC_KEY =
 			publicEnv.PUBLIC_SUPABASE_ANON_KEY ||
 			publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY
 	);
-const SUPABASE_AUTH_KEY = SUPABASE_PUBLIC_KEY || cleanEnvValue(privateEnv.SUPABASE_SERVICE_KEY);
+const SUPABASE_AUTH_KEY = SUPABASE_PUBLIC_KEY;
 
 function normalizeSupabaseUrl(url) {
 	try {
@@ -66,7 +66,7 @@ function assertSupabaseAuthConfigured() {
 	const supabase = getSupabaseClient();
 
 	if (!supabase) {
-		throw new Error('SUPABASE_URL and a Supabase API key are required for login.');
+		throw new Error('SUPABASE_URL and a Supabase anon or publishable key are required for login.');
 	}
 
 	return supabase;

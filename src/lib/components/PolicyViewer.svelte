@@ -132,22 +132,37 @@
 		}
 	};
 
-	const policy = policies[policyType];
+	let policy = $derived(policies[policyType] ?? policies.privacy);
+	const policyBlocks = $derived(
+		policy.content
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				if (line.startsWith('### ')) {
+					return { type: 'h3', text: line.slice(4) };
+				}
+
+				if (line.startsWith('## ')) {
+					return { type: 'h2', text: line.slice(3) };
+				}
+
+				if (line.startsWith('- ')) {
+					return { type: 'li', text: line.slice(2) };
+				}
+
+				return { type: 'p', text: line };
+			})
+	);
 
 	const handleClose = () => {
 		isOpen = false;
-	};
-
-	const handleBackdropClick = (e) => {
-		if (e.target === e.currentTarget) {
-			handleClose();
-		}
 	};
 </script>
 
 {#if isOpen}
 	<div class="policy-modal" role="dialog" aria-modal="true" aria-labelledby="policy-title">
-		<div class="backdrop" onclick={handleBackdropClick}></div>
+		<button class="backdrop" type="button" onclick={handleClose} aria-label="닫기"></button>
 		<div class="modal-content">
 			<header>
 				<h2 id="policy-title">{policy.title}</h2>
@@ -161,7 +176,17 @@
 					<small>버전 {policy.version}</small>
 				</div>
 				<div class="policy-text">
-					{@html policy.content.replace(/\n/g, '<br>').replace(/^### /gm, '<h3>').replace(/^## /gm, '<h2>').replace(/^- /gm, '<li>')}
+					{#each policyBlocks as block, index (`${block.type}-${index}-${block.text}`)}
+						{#if block.type === 'h2'}
+							<h2>{block.text}</h2>
+						{:else if block.type === 'h3'}
+							<h3>{block.text}</h3>
+						{:else if block.type === 'li'}
+							<p class="list-item">{block.text}</p>
+						{:else}
+							<p>{block.text}</p>
+						{/if}
+					{/each}
 				</div>
 			</div>
 
@@ -185,7 +210,9 @@
 	.backdrop {
 		position: absolute;
 		inset: 0;
+		border: 0;
 		background: rgba(0, 0, 0, 0.4);
+		cursor: pointer;
 	}
 
 	.modal-content {
@@ -273,7 +300,7 @@
 		word-break: keep-all;
 	}
 
-	.policy-text :global(h2) {
+	.policy-text h2 {
 		margin: 18px 0 10px 0;
 		color: #1f8b7c;
 		font-size: 1.1rem;
@@ -282,22 +309,26 @@
 		padding-bottom: 6px;
 	}
 
-	.policy-text :global(h3) {
+	.policy-text h3 {
 		margin: 14px 0 8px 0;
 		color: #187064;
 		font-size: 0.98rem;
 		font-weight: 900;
 	}
 
-	.policy-text :global(li) {
-		margin-left: 20px;
-		margin-bottom: 6px;
+	.policy-text p {
+		margin: 8px 0;
 	}
 
-	.policy-text :global(br) {
-		display: block;
-		content: '';
-		margin: 6px 0;
+	.policy-text .list-item {
+		position: relative;
+		margin-left: 18px;
+	}
+
+	.policy-text .list-item::before {
+		position: absolute;
+		left: -14px;
+		content: '-';
 	}
 
 	footer {

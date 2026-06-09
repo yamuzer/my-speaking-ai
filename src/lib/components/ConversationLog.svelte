@@ -140,7 +140,7 @@
 								<span>{item.role === 'user' ? '내 음성' : 'AI 코치'} · {item.time}</span>
 								<p>{item.text}</p>
 								<div class="usage-meta" aria-label="모델 및 토큰 사용량">
-									{#each getUsageRows(item) as row}
+									{#each getUsageRows(item) as row (`${row.label}-${row.model}-${row.detail}`)}
 										<small>
 											<b>{row.label}</b>
 											<em>{row.model}</em>

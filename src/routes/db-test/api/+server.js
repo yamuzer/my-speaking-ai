@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 import { Client } from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '$env/dynamic/private';
@@ -12,6 +13,14 @@ const TEST_ITEMS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS public.test_items (
   content TEXT NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );`;
+
+function assertDevOnly() {
+  if (!dev) {
+    return json({ error: 'Not found' }, { status: 404 });
+  }
+
+  return null;
+}
 
 function normalizeSupabaseUrl(url) {
   try {
@@ -48,6 +57,9 @@ async function withClient(fn) {
 }
 
 export async function GET() {
+  const blocked = assertDevOnly();
+  if (blocked) return blocked;
+
   if (connectionString) {
     const result = await withClient(async (client) => {
       const res1 = await client.query('SELECT 1 AS ok');
@@ -84,6 +96,9 @@ export async function GET() {
 }
 
 export async function POST({ request }) {
+  const blocked = assertDevOnly();
+  if (blocked) return blocked;
+
   const body = await request.json().catch(() => ({}));
   const create = body.create === true;
   const insert = body.insert === true;

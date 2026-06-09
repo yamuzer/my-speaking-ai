@@ -1,4 +1,18 @@
+import { dev } from '$app/environment';
 import { getUserFromSession } from '$lib/server/auth.js';
+
+function setSecurityHeaders(response) {
+	response.headers.set('X-Content-Type-Options', 'nosniff');
+	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	response.headers.set(
+		'Permissions-Policy',
+		'camera=(), microphone=(self), geolocation=(), payment=(), usb=()'
+	);
+
+	if (!dev) {
+		response.headers.set('X-Frame-Options', 'DENY');
+	}
+}
 
 export async function handle({ event, resolve }) {
 	try {
@@ -7,5 +21,7 @@ export async function handle({ event, resolve }) {
 		event.locals.user = null;
 	}
 
-	return resolve(event);
+	const response = await resolve(event);
+	setSecurityHeaders(response);
+	return response;
 }

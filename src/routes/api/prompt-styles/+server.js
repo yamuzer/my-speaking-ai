@@ -1,9 +1,20 @@
 import { json } from '@sveltejs/kit';
 import { savePromptStyle } from '$lib/server/prompt-styles.js';
 
+const MAX_BODY_BYTES = 32 * 1024;
+
+function isBodyTooLarge(request) {
+	const contentLength = Number(request.headers.get('content-length') ?? 0);
+	return Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES;
+}
+
 export const POST = async ({ locals, request }) => {
 	if (!locals.user) {
 		return json({ error: '로그인이 필요합니다.' }, { status: 401 });
+	}
+
+	if (isBodyTooLarge(request)) {
+		return json({ error: '프롬프트 스타일 요청이 너무 큽니다.' }, { status: 413 });
 	}
 
 	const body = await request.json().catch(() => null);
